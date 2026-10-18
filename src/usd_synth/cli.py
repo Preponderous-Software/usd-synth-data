@@ -8,6 +8,7 @@ import sys
 
 from . import __version__
 from .config import ConfigError, load_config
+from .render import RenderError
 from .seeds import check_seed
 
 
@@ -30,6 +31,28 @@ def _cmd_scenes(args: argparse.Namespace) -> int:
     for index in range(args.start, args.start + args.count):
         path = write_scene(cfg, args.seed, index, args.out, config_dir)
         print(path)
+    return 0
+
+
+def _cmd_render(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .render import find_blender, render_batch, scene_spec
+
+    cfg = load_config(args.config)
+    src = Path(args.scenes)
+    files = sorted(src.glob("*.usda")) if src.is_dir() else [src]
+    if not files:
+        print(f"usd-synth render: no .usda files in {src}", file=sys.stderr)
+        return 1
+    blender = find_blender(args.blender)
+    specs = [scene_spec(f, Path(args.out) / f.stem) for f in files]
+    size = cfg.render.batch_size
+    for start in range(0, len(specs), size):
+        result = render_batch(cfg, specs[start : start + size], blender, threads=args.threads)
+        for info in result.scenes:
+            t = info["timings"]
+            print(f"{info['usd']}: render {t['render']:.2f}s ({info['device']})")
     return 0
 
 
@@ -62,8 +85,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="directory for scene_NNNNNN.usda files")
     p.set_defaults(func=_cmd_scenes)
 
+    p = sub.add_parser("render", help="render USD scenes with Blender (RGB + depth + index)")
+    p.add_argument("--config", required=True, help="config providing render settings")
+    p.add_argument("--scenes", required=True, help="a .usda file or a directory of them")
+    p.add_argument("--out", required=True, help="output directory (one subdirectory per scene)")
+    p.add_argument("--blender", help="Blender binary (default: $USD_SYNTH_BLENDER or PATH)")
+    p.add_argument("--threads", type=int, help="override render.threads")
+    p.set_defaults(func=_cmd_render)
+
     stubs = {
-        "render": ("render USD scenes with Blender", "M3"),
         "generate": ("generate, render and label a dataset", "M5"),
         "reproduce": ("regenerate one image of a dataset", "M5"),
         "merge": ("merge shard outputs into one dataset", "M6"),
@@ -82,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as err:
         print(err, file=sys.stderr)
         return 1
-    except ValueError as err:  # e.g. an out-of-range seed
+    except (RenderError, ValueError) as err:  # e.g. Blender failed, an out-of-range seed
         print(f"usd-synth: {err}", file=sys.stderr)
         return 1
     except FileNotFoundError as err:

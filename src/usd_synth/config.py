@@ -165,7 +165,7 @@ class DomeConfig(_Model):
 
 class LightingConfig(_Model):
     key_lights: Annotated[IntRange, _bounded(lo=1, hi=16)] = (1, 3)
-    intensity: PositiveRange = (200.0, 2000.0)
+    intensity: PositiveRange = (30.0, 300.0)
     color_temp_k: Annotated[Range, _bounded(1000.0, 40000.0)] = (2700.0, 6500.0)
     dome: DomeConfig = DomeConfig()
 

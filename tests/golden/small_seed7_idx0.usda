@@ -222,7 +222,7 @@ def Xform "World"
         def SphereLight "Key_1"
         {
             color3f inputs:color = (1, 0.602135, 0.362404)
-            float inputs:intensity = 877.8296
+            float inputs:intensity = 131.67444
             float inputs:radius = 0.151961
             double3 xformOp:translate = (0.222094, 0.45146, 1.148901)
             uniform token[] xformOpOrder = ["xformOp:translate"]

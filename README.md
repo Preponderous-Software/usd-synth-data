@@ -9,7 +9,7 @@ a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any clust
 
 > **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
 > package, config schema and seed derivation (M1); the tabletop scene generator writing
-> flattened USD (M2). Commands below that are not implemented
+> flattened USD (M2); the headless Blender Cycles render worker and its container image (M3). Commands below that are not implemented
 > yet print a "not implemented yet" message.
 
 ---
@@ -102,13 +102,25 @@ MVP work is tracked in the issues labelled
 
 ## 🚀 Getting Started
 
-Works today (M1–M2):
+Works today (M1–M3; rendering needs Blender 5.2 — set `USD_SYNTH_BLENDER` or use the
+container image):
 
 ```bash
 pip install -e '.[dev]'
 usd-synth config --config configs/tabletop.yaml   # validate a config, print its SHA-256
 usd-synth scenes --config configs/tabletop.yaml --seed 42 --count 5 --out out/scenes
+usd-synth render --config configs/tabletop.yaml --scenes out/scenes --out out/render
 pytest                                            # run the test suite
+```
+
+Or in the render worker image (Blender 5.2.2 included, CPU rendering):
+
+```bash
+docker build -t usd-synth .
+docker run --rm -v "$PWD/out:/app/out" usd-synth scenes --config configs/tabletop.yaml \
+  --seed 42 --count 5 --out out/scenes
+docker run --rm -v "$PWD/out:/app/out" usd-synth render --config configs/tabletop.yaml \
+  --scenes out/scenes --out out/render
 ```
 
 Intended interface (later milestones):

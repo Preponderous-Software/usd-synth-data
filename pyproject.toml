@@ -13,6 +13,8 @@ authors = [{ name = "Daniel McCoy Stephenson" }]
 requires-python = ">=3.12"
 dependencies = [
     "numpy==2.5.4",
+    "OpenEXR==3.5.2",
+    "Pillow==13.0.0",
     "pydantic==2.14.1",
     "PyYAML==6.0.3",
     "usd-core==26.8",
