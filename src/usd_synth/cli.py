@@ -9,8 +9,6 @@ import sys
 from . import __version__
 from .config import ConfigError, load_config
 
-DEFAULT_CONFIG = "configs/tabletop.yaml"
-
 
 def _cmd_config(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
@@ -37,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     p = sub.add_parser("config", help="validate a config and print its hash")
-    p.add_argument("--config", default=DEFAULT_CONFIG)
+    p.add_argument("--config", required=True, help="path to a YAML config")
     p.add_argument("--resolved", action="store_true", help="also print the resolved config")
     p.set_defaults(func=_cmd_config)
 
@@ -61,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except ConfigError as err:
         print(err, file=sys.stderr)
+        return 1
+    except FileNotFoundError as err:
+        print(f"usd-synth: file not found: {err.filename}", file=sys.stderr)
         return 1
 
 

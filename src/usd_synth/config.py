@@ -56,7 +56,7 @@ Probability = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
 class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class ImageConfig(_Model):

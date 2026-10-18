@@ -72,6 +72,15 @@ def _errors_for(data):
         (lambda d: d["objects"]["library"][0].pop("size_m"), "objects.library.0"),
         (lambda d: d["objects"]["library"][1].__setitem__("name", "box"), "objects"),
         (lambda d: d.__setitem__("version", 2), "version"),
+        (
+            lambda d: d["materials"].__setitem__("roughness", [float("nan"), 0.9]),
+            "materials.roughness.0",
+        ),
+        (
+            lambda d: d["camera"].__setitem__("distance_m", [0.6, float("inf")]),
+            "camera.distance_m.1",
+        ),
+        (lambda d: d["render"].__setitem__("samples", float("inf")), "render.samples"),
     ],
 )
 def test_invalid_config_names_offending_field(raw, mutate, field):
@@ -119,3 +128,13 @@ def test_cli_config_invalid_names_field(tmp_path, raw, capsys):
     bad.write_text(yaml.safe_dump(raw))
     assert main(["config", "--config", str(bad)]) == 1
     assert "objects.count" in capsys.readouterr().err
+
+
+def test_cli_missing_config_file_is_clean_error(tmp_path, capsys):
+    assert main(["config", "--config", str(tmp_path / "nope.yaml")]) == 1
+    assert "file not found" in capsys.readouterr().err
+
+
+def test_cli_config_flag_is_required():
+    with pytest.raises(SystemExit):
+        main(["config"])
