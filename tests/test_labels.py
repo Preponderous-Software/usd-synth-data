@@ -1,0 +1,176 @@
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+import yaml
+from pycocotools import mask as mask_utils
+
+from usd_synth.coco import build_coco, build_manifest, dump_json, validate_coco
+from usd_synth.config import parse_config
+from usd_synth.labels import (
+    InstanceInfo,
+    coco_categories,
+    depth_to_mm,
+    encode_rle,
+    label_scene,
+    read_depth_png,
+    tight_bbox,
+    write_depth_png,
+)
+
+SMALL = Path(__file__).resolve().parent / "data" / "small.yaml"
+
+
+def _cfg(**labels):
+    raw = yaml.safe_load(SMALL.read_text())
+    raw["labels"] = {"min_visible_pixels": 4, "min_visible_fraction": 0.25, **labels}
+    return parse_config(raw)
+
+
+def _obj(iid, area=0.0, cat="box"):
+    return InstanceInfo(iid, "object", cat, area)
+
+
+def test_rle_round_trip_and_tight_box():
+    mask = np.zeros((20, 30), dtype=bool)
+    mask[5:9, 10:17] = True
+    rle = encode_rle(mask)
+    decoded = mask_utils.decode({"size": rle["size"], "counts": rle["counts"].encode()})
+    assert np.array_equal(decoded.astype(bool), mask)
+    assert tight_bbox(mask) == [10.0, 5.0, 7.0, 4.0]
+
+
+def test_occlusion_masks_only_visible_pixels():
+    index = np.zeros((20, 20), dtype=np.int32)
+    index[2:12, 2:12] = 1  # 100 px of instance 1 ...
+    index[6:12, 6:12] = 2  # ... of which 36 are covered by instance 2 in front
+    anns = label_scene(index, [_obj(1, 100), _obj(2, 36)], _cfg())
+    a1, a2 = anns
+    assert a1["area"] == 64 and a1["bbox"] == [2.0, 2.0, 10.0, 10.0]
+    assert a2["area"] == 36 and a2["bbox"] == [6.0, 6.0, 6.0, 6.0]
+
+
+def test_min_visible_fraction_drops_heavily_occluded():
+    index = np.zeros((20, 20), dtype=np.int32)
+    index[0:4, 0:4] = 1  # 16 visible px of an instance whose full silhouette is 100 px
+    assert label_scene(index, [_obj(1, 100)], _cfg()) == []
+    assert len(label_scene(index, [_obj(1, 60)], _cfg())) == 1  # 16/60 >= 0.25
+
+
+def test_truncation_at_image_border():
+    # an instance mostly outside the image: its unclipped projected area is large
+    index = np.zeros((10, 10), dtype=np.int32)
+    index[:, 8:] = 1  # 20 px visible at the right border
+    assert label_scene(index, [_obj(1, 200)], _cfg()) == []  # 10 % visible -> dropped
+    (ann,) = label_scene(index, [_obj(1, 40)], _cfg())  # 50 % visible -> kept
+    assert ann["bbox"] == [8.0, 0.0, 2.0, 10.0]
+
+
+def test_min_visible_pixels():
+    index = np.zeros((10, 10), dtype=np.int32)
+    index[0, 0:3] = 1
+    assert label_scene(index, [_obj(1, 3)], _cfg()) == []
+    assert len(label_scene(index, [_obj(1, 3)], _cfg(min_visible_pixels=3))) == 1
+
+
+def test_not_visible_and_unknown_area():
+    index = np.zeros((10, 10), dtype=np.int32)
+    index[0:5, 0:5] = 2
+    anns = label_scene(index, [_obj(1, 50), _obj(2, 0.0)], _cfg())
+    assert [a["instance_id"] for a in anns] == [2]  # 1 not visible; 2 has no area estimate
+
+
+def test_distractors_ignore_vs_omit():
+    index = np.zeros((10, 10), dtype=np.int32)
+    index[0:5, 0:5] = 3
+    dis = InstanceInfo(3, "distractor", "distractor", 25)
+    cfg = _cfg()
+    (ann,) = label_scene(index, [dis], cfg)
+    cats = {c["name"]: c["id"] for c in coco_categories(cfg)}
+    assert ann["iscrowd"] == 1 and ann["category_id"] == cats["distractor"]
+    raw = yaml.safe_load(SMALL.read_text())
+    raw["distractors"] = {"label": "omit"}
+    omit = parse_config(raw)
+    assert label_scene(index, [dis], omit) == []
+    assert "distractor" not in [c["name"] for c in coco_categories(omit)]
+
+
+def test_categories_in_config_order():
+    assert [c["name"] for c in coco_categories(_cfg())] == [
+        "box",
+        "cylinder",
+        "torus",
+        "distractor",
+    ]
+    assert [c["id"] for c in coco_categories(_cfg())] == [1, 2, 3, 4]
+
+
+def test_depth_encoding(tmp_path):
+    depth = np.array([[0.5, 1.2345, 9.999], [10.5, np.inf, 1e10]], dtype=np.float32)
+    mm = depth_to_mm(depth, max_m=10.0)
+    assert mm.dtype == np.uint16
+    assert mm.tolist() == [[500, 1234, 9999], [0, 0, 0]] or mm.tolist() == [
+        [500, 1235, 9999],
+        [0, 0, 0],
+    ]
+    write_depth_png(depth, 10.0, tmp_path / "d.png")
+    back = read_depth_png(tmp_path / "d.png")
+    assert back[0, 0] == pytest.approx(0.5) and np.isnan(back[1, 0])
+
+
+def _record(i, anns, w=10, h=10):
+    return {
+        "scene_index": i,
+        "file_name": f"images/scene_{i:06d}.png",
+        "depth_file": f"depth/scene_{i:06d}.png",
+        "scene_file": f"scenes/scene_{i:06d}.usda",
+        "width": w,
+        "height": h,
+        "annotations": anns,
+    }
+
+
+def _anns(seed):
+    rng = np.random.default_rng(seed)
+    index = np.zeros((10, 10), dtype=np.int32)
+    for iid in (1, 2):
+        x, y = rng.integers(0, 6, size=2)
+        index[y : y + 4, x : x + 4] = iid
+    return label_scene(index, [_obj(1, 16), _obj(2, 16, "torus")], _cfg(min_visible_fraction=0))
+
+
+def test_coco_ids_follow_scene_order_not_record_order(tmp_path):
+    recs = [_record(i, _anns(i)) for i in (3, 0, 7)]
+    a = build_coco(recs, _cfg())
+    b = build_coco(list(reversed(recs)), _cfg())
+    assert a == b
+    assert [im["id"] for im in a["images"]] == [0, 3, 7]
+    assert [an["id"] for an in a["annotations"]] == list(range(1, len(a["annotations"]) + 1))
+    with pytest.raises(ValueError, match="duplicate"):
+        build_coco(recs + recs[:1], _cfg())
+
+
+def test_valid_coco_passes_and_corruptions_are_caught(tmp_path):
+    data = build_coco([_record(i, _anns(i)) for i in range(4)], _cfg())
+    path = tmp_path / "annotations.json"
+    dump_json(data, path)
+    assert validate_coco(path) == []
+
+    bad = json.loads(path.read_text())
+    bad["annotations"][0]["bbox"] = [9.0, 9.0, 1.0, 1.0]
+    bad["annotations"][1]["category_id"] = 99
+    bad["annotations"][2]["segmentation"]["size"] = [5, 5]
+    dump_json(bad, path)
+    errors = validate_coco(path)
+    assert any("does not enclose" in e for e in errors)
+    assert any("unknown category_id 99" in e for e in errors)
+    assert any("mask" in e and "image size" in e for e in errors)
+
+
+def test_manifest_records_provenance():
+    cfg = _cfg()
+    m = build_manifest(cfg, 42, [_record(5, [])], {"blender": "5.2.2", "device": "cpu"}, "/cfg")
+    assert m["config_hash"] == cfg.config_hash() and m["dataset_seed"] == 42
+    assert m["blender"] == "5.2.2" and m["device"] == "cpu" and m["samples"] == cfg.render.samples
+    assert m["images"][0]["scene_index"] == 5 and m["images"][0]["image_id"] == 5

@@ -15,6 +15,7 @@ dependencies = [
     "numpy==2.5.4",
     "OpenEXR==3.5.2",
     "Pillow==13.0.0",
+    "pycocotools==2.0.11",
     "pydantic==2.14.1",
     "PyYAML==6.0.3",
     "usd-core==26.8",
@@ -35,6 +36,10 @@ packages = ["src/usd_synth"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+filterwarnings = [
+    # pycocotools 2.0.11 decode() predates NumPy 2's __array__ copy keyword; harmless here
+    "ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

@@ -244,7 +244,23 @@ exactly:
    millimetres (0 = no hit / beyond `max_m`) for broad tool compatibility, with the raw float
    EXR optionally kept.
 6. **Categories.** Come from the config's object library; IDs are assigned in config order and
-   stored in the COCO `categories` list.
+   stored in the COCO `categories` list. When `distractors.label` is `ignore`, a final
+   `distractor` category is added and visible distractors become `iscrowd: 1` regions (with
+   `omit` they get no annotation and no category).
+7. **IDs and files.** Each rendered scene first gets an ID-less label record (`labels.py`);
+   `coco.py` assigns IDs when a dataset is assembled: image `id` = scene index, annotation `id`
+   counting from 1 in (scene index, instance ID) order, so any shard split assembles to the
+   same file. Each image entry carries `file_name`, `depth_file`, `scene_file` and
+   `scene_index`; each annotation also keeps its `instance_id`. `manifest.json` records the
+   resolved config and its hash, the config directory, the dataset seed, tool version,
+   Blender version, device, samples, denoising, resolution, and per image the scene index,
+   scene seed and render seed.
+
+**Measured (M4, Blender 5.2.2, CPU):** a 10 cm cube seen head-on at 0.9 m, 50 mm lens, 640×480:
+box `[271, 191, 98, 98]` against an analytic `[270.6, 190.6, 98.8, 98.8]` (within 0.8 px),
+mask area 9604 px against 9755 px analytic (−1.5 %; the index pass samples pixel centres), top
+face depth 0.900 m. `tests/test_labels_render.py` asserts the MVP bounds (2 px, 2 %);
+`validate_coco` (`coco.py`) implements the criterion 7 checks and runs on rendered datasets.
 
 ### Why COCO
 
