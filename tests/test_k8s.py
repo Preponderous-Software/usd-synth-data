@@ -135,3 +135,24 @@ def test_merge_does_not_wait_on_permanent_errors(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("time.sleep", lambda s: pytest.fail("should not wait"))
     assert cli.main(["merge", "--out", str(tmp_path), "--wait", "60"]) == 1
     assert "overlap" in capsys.readouterr().err
+
+
+def test_sigterm_stops_the_worker_promptly(tmp_path):
+    """A deleted pod's worker (PID 1 in its container) must stop on SIGTERM, not finish."""
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    code = (
+        "import time, usd_synth.cli as c, signal\n"
+        "c.main.__globals__['build_parser'] = lambda: type('P', (), {'parse_args': lambda s, a:"
+        " type('A', (), {'func': staticmethod(lambda a: time.sleep(60) or 0)})()})()\n"
+        "print('ready', flush=True)\n"
+        "raise SystemExit(c.main([]))\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "ready"
+    time.sleep(0.5)
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=10) == 128 + signal.SIGTERM

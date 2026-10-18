@@ -298,7 +298,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _exit_on_sigterm(signum, frame):
+    # As PID 1 in a container the process would otherwise ignore SIGTERM, so a deleted or
+    # evicted pod would keep rendering through its grace period. Raising unwinds normally:
+    # the running Blender child is killed and no DONE is written for the unfinished scene.
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str] | None = None) -> int:
+    import signal
+    import threading
+
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _exit_on_sigterm)
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

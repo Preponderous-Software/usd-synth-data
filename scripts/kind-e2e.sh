@@ -65,7 +65,7 @@ timeout 300 bash -c "until kubectl --context ${CTX} get pod -l '${SEL}' -o name 
 k wait --for=condition=Ready pod -l "${SEL}" --timeout=300s
 POD="$(k get pod -l "${SEL}" -o jsonpath='{.items[0].metadata.name}')"
 timeout 600 bash -c "until kubectl --context ${CTX} logs ${POD} 2>/dev/null | grep -q 'shard 1: scene 3 done'; do sleep 1; done"
-k delete pod "${POD}" --wait=false
+k delete pod "${POD}" --wait=false --grace-period=5
 echo "deleted ${POD}"
 
 k wait --for=condition=Complete job/e2e-render --timeout=1200s
