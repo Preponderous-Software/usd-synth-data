@@ -20,6 +20,10 @@ class MergeError(ValueError):
     pass
 
 
+class MergeNotReady(MergeError):
+    """Shards are missing or unfinished — possibly still running (``merge --wait`` retries)."""
+
+
 def _dumps(data: dict) -> bytes:
     return (json.dumps(data, indent=1, sort_keys=True) + "\n").encode()
 
@@ -27,7 +31,7 @@ def _dumps(data: dict) -> bytes:
 def read_shards(sink: Sink) -> list[dict]:
     infos = [json.loads(sink.get_bytes(shard_prefix(k) + "shard.json")) for k in sink.shards()]
     if not infos:
-        raise MergeError(f"no shards found under {sink.describe('shards/')}")
+        raise MergeNotReady(f"no shards found under {sink.describe('shards/')}")
     first = infos[0]
     for info in infos[1:]:
         for key in ("config_hash", "dataset_seed", "count", "shard_count"):
@@ -53,7 +57,7 @@ def check_ranges(infos: list[dict], expected: range) -> None:
     missing = sorted(set(expected) - covered)
     extra = sorted(covered - set(expected))
     if missing:
-        raise MergeError(f"scene ranges are missing {len(missing)} scene(s): {_ranges(missing)}")
+        raise MergeNotReady(f"scene ranges are missing {len(missing)} scene(s): {_ranges(missing)}")
     if extra:
         raise MergeError(f"shards cover scenes outside the run: {_ranges(extra)}")
 
@@ -84,7 +88,7 @@ def merge(sink: Sink, expected: range | None = None) -> dict:
     done = {info["shard_index"]: sink.done_scenes(info["shard_index"]) for info in infos}
     incomplete = [i for i in expected if i not in done[owner[i]]]
     if incomplete:
-        raise MergeError(f"{len(incomplete)} scene(s) not complete: {_ranges(incomplete)}")
+        raise MergeNotReady(f"{len(incomplete)} scene(s) not complete: {_ranges(incomplete)}")
 
     ds = sink.dataset_prefix
     records, scenes = [], []

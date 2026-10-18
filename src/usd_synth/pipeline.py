@@ -103,6 +103,7 @@ def run_shard(
     shard: int = 0,
     threads: int | None = None,
     batch_size: int | None = None,
+    on_scene=None,
 ) -> ShardResult:
     """Generate, render and label ``indices`` into ``shard``; skip scenes whose DONE exists."""
     result = ShardResult()
@@ -129,6 +130,8 @@ def run_shard(
                     cfg, sink, shard, i, scratch, info, gen_s[i], per_start, batch_started
                 )
                 result.rendered.append(i)
+                if on_scene:
+                    on_scene(i)
     return result
 
 

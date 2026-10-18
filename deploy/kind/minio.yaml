@@ -1,0 +1,42 @@
+# MinIO inside a kind cluster, for the M7 integration test. Throwaway test credentials only;
+# data lives in an emptyDir and disappears with the pod.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-root
+stringData:
+  MINIO_ROOT_USER: usd-synth-test
+  MINIO_ROOT_PASSWORD: usd-synth-test-secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      containers:
+        - name: minio
+          image: usd-synth-minio:kind
+          imagePullPolicy: Never
+          args: ["server", "/data", "--address", ":9000"]
+          envFrom: [{ secretRef: { name: minio-root } }]
+          ports: [{ containerPort: 9000 }]
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            periodSeconds: 2
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes: [{ name: data, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector: { app: minio }
+  ports: [{ port: 9000, targetPort: 9000 }]

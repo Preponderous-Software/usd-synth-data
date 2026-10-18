@@ -141,8 +141,10 @@ class LocalSink(Sink):
 
 
 def open_sink(out: str | Path) -> Sink:
-    """A sink for ``--out``: a filesystem path, or (from M7) an ``s3://bucket/prefix`` URI."""
+    """A sink for ``--out``: a filesystem path or an ``s3://bucket/prefix`` URI."""
     text = str(out)
     if text.startswith("s3://"):
-        raise ValueError("s3:// outputs need the S3-compatible sink, which arrives in M7")
+        from .s3 import S3Sink
+
+        return S3Sink.from_uri(text)
     return LocalSink(text)

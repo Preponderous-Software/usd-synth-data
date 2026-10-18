@@ -108,6 +108,10 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     check_seed(args.seed)
     if args.count < 1:
         raise ValueError("--count must be >= 1")
+    if args.shard_count is not None and args.shard_index is None:
+        index = os.environ.get("JOB_COMPLETION_INDEX")  # set by a Kubernetes Indexed Job
+        if index is not None:
+            args.shard_index = int(index)
     if (args.shard_index is None) != (args.shard_count is None):
         raise ValueError("--shard-index and --shard-count must be given together")
     if args.workers < 1:
@@ -123,6 +127,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         result = run_shard(
             cfg, config_dir, args.seed, rng, sink, blender,
             shard=k, threads=threads, batch_size=args.batch_size,
+            on_scene=lambda i: print(f"shard {k}: scene {i} done", flush=True),
         )  # fmt: skip
         print(
             f"shard {k}/{n}: scenes [{rng.start}, {rng.stop}): {len(result.rendered)} rendered, "
@@ -153,11 +158,48 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
 
 def _cmd_merge(args: argparse.Namespace) -> int:
-    from .merge import merge
+    import time
+
+    from .merge import MergeNotReady, merge
     from .storage import open_sink
 
     sink = open_sink(args.out)
-    return _validate_and_report(sink, merge(sink))
+    deadline = time.monotonic() + (args.wait or 0)
+    while True:
+        try:
+            merged = merge(sink)
+            break
+        except MergeNotReady as err:
+            if time.monotonic() >= deadline:
+                raise
+            print(f"waiting for shards: {err}", flush=True)
+            time.sleep(args.poll)
+    return _validate_and_report(sink, merged)
+
+
+def _cmd_k8s_manifest(args: argparse.Namespace) -> int:
+    from .k8s import render_manifests
+
+    cfg = load_config(args.config)
+    check_seed(args.seed)
+    sys.stdout.write(
+        render_manifests(
+            cfg,
+            seed=args.seed,
+            count=args.count,
+            shards=args.shards,
+            out=args.out,
+            image=args.image,
+            name=args.name,
+            parallelism=args.parallelism,
+            cpu=args.cpu,
+            memory=args.memory,
+            secret=args.secret,
+            backoff_limit_per_index=args.backoff_limit_per_index,
+            image_pull_policy=args.image_pull_policy,
+        )  # fmt: skip
+    )
+    return 0
 
 
 def _cmd_reproduce(args: argparse.Namespace) -> int:
@@ -178,14 +220,6 @@ def _cmd_reproduce(args: argparse.Namespace) -> int:
         f"(threshold {report['rgb_threshold']}) -> {'OK' if report['ok'] else 'MISMATCH'}"
     )
     return 0 if report["ok"] else 1
-
-
-def _not_yet(milestone: str):
-    def run(args: argparse.Namespace) -> int:
-        print(f"usd-synth {args.command}: not implemented yet ({milestone})", file=sys.stderr)
-        return 2
-
-    return run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,7 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--threads", type=int, help="override render.threads")
     p.add_argument("--batch-size", type=int, help="override render.batch_size")
     p.add_argument("--workers", type=int, default=1, help="local worker processes (shards)")
-    p.add_argument("--shard-index", type=int, help="run only this shard (then use merge)")
+    p.add_argument("--shard-index", type=int, help="run only this shard, then use merge "
+                   "(default with --shard-count: $JOB_COMPLETION_INDEX)")  # fmt: skip
     p.add_argument("--shard-count", type=int, help="total number of shards")
     p.set_defaults(func=_cmd_generate)
 
@@ -239,15 +274,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_reproduce)
 
     p = sub.add_parser("merge", help="merge shard outputs into one dataset")
-    p.add_argument("--out", required=True, help="run directory holding shards/ (as for generate)")
+    p.add_argument("--out", required=True, help="run location holding shards/ (as for generate)")
+    p.add_argument("--wait", type=float, default=0, help="seconds to wait for unfinished shards")
+    p.add_argument("--poll", type=float, default=10, help="seconds between checks with --wait")
     p.set_defaults(func=_cmd_merge)
 
-    stubs = {
-        "k8s-manifest": ("render Kubernetes Job manifests", "M7"),
-    }
-    for name, (help_text, milestone) in stubs.items():
-        p = sub.add_parser(name, help=f"{help_text} (not implemented yet)")
-        p.set_defaults(func=_not_yet(milestone))
+    p = sub.add_parser("k8s-manifest", help="print Kubernetes manifests (Indexed Job + merge Job)")
+    p.add_argument("--config", required=True, help="path to a YAML config")
+    p.add_argument("--seed", type=int, required=True, help="dataset seed (>= 0)")
+    p.add_argument("--count", type=int, required=True, help="number of images")
+    p.add_argument("--shards", type=int, required=True, help="shards = Job completions")
+    p.add_argument("--out", required=True, help="s3://bucket/prefix for shards and dataset")
+    p.add_argument("--image", default="usd-synth:0.1.0", help="render worker image")
+    p.add_argument("--name", default="usd-synth", help="name prefix of the Kubernetes objects")
+    p.add_argument("--parallelism", type=int, help="pods at once (default: --shards)")
+    p.add_argument("--cpu", type=int, help="CPU limit per pod = Blender threads (default: "
+                   "render.threads or 2)")  # fmt: skip
+    p.add_argument("--memory", default="2Gi", help="memory request/limit per pod")
+    p.add_argument("--secret", default="usd-synth-s3", help="Secret with endpoint + credentials")
+    p.add_argument("--backoff-limit-per-index", type=int, default=3, help="retries per shard")
+    p.add_argument("--image-pull-policy", default="IfNotPresent")
+    p.set_defaults(func=_cmd_k8s_manifest)
     return parser
 
 
