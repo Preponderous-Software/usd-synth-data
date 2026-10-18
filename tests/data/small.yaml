@@ -1,0 +1,14 @@
+# Small fixture config for golden-file and Blender tests: few objects, tiny image.
+version: 1
+scenario: tabletop
+image: { width: 160, height: 120 }
+render: { samples: 4, denoise: false, threads: 2, batch_size: 4 }
+objects:
+  library:
+    - { name: box,  source: primitive:box,      category: box,      size_m: [0.06, 0.10] }
+    - { name: can,  source: primitive:cylinder, category: cylinder, size_m: [0.06, 0.10] }
+    - { name: ring, source: primitive:torus,    category: torus,    size_m: [0.06, 0.10] }
+  count: [2, 3]
+distractors: { count: [0, 1] }
+support: { kind: [table, bin], size_m: { x: [0.5, 0.6], y: [0.4, 0.5] } }
+camera: { distance_m: [0.7, 0.9], elevation_deg: [50, 70] }

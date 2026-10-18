@@ -62,8 +62,9 @@ is the only completion signal the design relies on.
   first draws of several streams; a stream-independence test proves extra draws in one stage
   leave the others unchanged.
 - The Cycles sampling seed (`scene.cycles.seed`) is derived from the `render` stream.
-- Floating-point values written to `.usda` are formatted with a fixed precision so the text is
-  byte-stable across platforms.
+- Floating-point values written to `.usda` are rounded to 6 decimals before authoring so the
+  text is byte-stable across platforms. Byte identity (same seed/index twice; scene *i* alone vs
+  inside a range) is tested in `tests/test_scenegen.py`.
 
 **Reproducibility contract.** The USD stage and every label derived from geometry are
 byte-reproducible. The RGB image is reproducible to the extent the renderer is: the same
@@ -78,26 +79,37 @@ One self-contained, flattened `.usda` file per scene:
 
 ```
 /World                         (Xform, defaultPrim; upAxis = "Z", metersPerUnit = 1.0)
+  /World/Looks
+    /World/Looks/mat_0001      (UsdShade.Material with UsdPreviewSurface; optional UsdUVTexture)
   /World/Env
-    /World/Env/Support         (Mesh: table top or bin; category "support", not labelled)
-    /World/Env/Background      (Mesh: backdrop/floor plane)
+    /World/Env/Support         (Xform: Mesh "top" slab, plus four wall Meshes for a bin;
+                                category "support", not labelled; top face at z = 0)
+    /World/Env/Background      (Mesh: 20 m floor plane at z = -0.75)
   /World/Objects
-    /World/Objects/inst_0001   (Xform + Mesh child; labelled instance)
-    /World/Objects/inst_0002
+    /World/Objects/inst_0001   (Xform with one transform op; labelled instance)
+      .../inst_0001_geom       (Mesh child; or "asset" for a flattened user asset)
     ...
   /World/Distractors
-    /World/Distractors/dis_0001 (clutter; rendered but labelled as ignore/crowd per config)
+    /World/Distractors/dis_0004 (clutter; IDs continue after the objects' IDs)
   /World/Lights
-    /World/Lights/Key          (UsdLux.SphereLight / RectLight)
+    /World/Lights/Key_1        (UsdLux.SphereLight; colour from a sampled colour temperature)
     /World/Lights/Dome         (UsdLux.DomeLight, optional HDRI texture)
-  /World/Camera                (UsdGeom.Camera, pinhole)
-  /World/Looks
-    /World/Looks/mat_0001      (UsdShade.Material with UsdPreviewSurface)
+  /World/Camera                (UsdGeom.Camera, pinhole, horizontal sensor fit)
 ```
 
-Each labelled instance prim carries custom attributes in the `userProperties` namespace:
-`userProperties:usd_synth:instance_id` (int), `...:category_id` (int), `...:category_name`
-(string), `...:asset` (string). The prim name `inst_NNNN` also encodes the instance ID.
+Custom attributes, all in the `userProperties:usd_synth:` namespace:
+
+| Prim | Attributes |
+|---|---|
+| `/World` | `scene_index`, `dataset_seed`, `image_width`, `image_height`, `support_kind`, `categories` (labelled category names in config order; COCO id = position + 1) |
+| `inst_NNNN`, `dis_NNNN` | `instance_id` (int, 1-based, unique per scene; the Cycles pass index), `category_id` (int; 0 for distractors), `category_name`, `asset` (library entry name or `distractor:<shape>`), `kind` (`object` or `distractor`), `projected_bbox` (`[x, y, w, h]` px of all projected mesh points, unclipped), `projected_area_px` (area of their convex hull) |
+| `/World/Camera` | `focal_length_mm`, `sensor_width_mm` (the renderer reads these rather than relying on unit conversion of the USD camera attributes) |
+
+The prim name `inst_NNNN` / `dis_NNNN` (and the mesh child `inst_NNNN_geom`) also encodes the
+instance ID. The generator places objects first, then distractors, all on the support top with
+an axis-aligned footprint test (`min_separation_m` apart); an object with no free spot after
+100 attempts is dropped, deterministically. Golden files in `tests/golden/` pin the generated
+text for a small fixture config.
 
 Design choices driven by Blender's USD importer, per the
 [Blender 5.2 manual's USD page](https://docs.blender.org/manual/en/5.2/files/import_export/usd.html):
@@ -190,7 +202,9 @@ exactly:
    Whether the Object Index pass is free of anti-aliasing blends at edges (needed so rounding
    is correct) is **verify in M3**; the fallback is Cryptomatte, which Cycles also supports.
 3. **Boxes.** Tight `[x, y, w, h]` from the mask extents (visible box, consistent with COCO).
-4. **Visibility filtering.** To avoid extra renders, the generator records each instance's projected 3D bounding box; instances with
+4. **Visibility filtering.** To avoid extra renders, the generator records each instance's
+   projected box and the convex-hull area of its projected mesh points (`projected_bbox`,
+   `projected_area_px`; for user assets the hull of their bounding-box corners); instances with
    fewer than `min_visible_pixels` visible pixels, or whose visible area is below
    `min_visible_fraction` of an estimate of their full area, are dropped. (A more
    exact alternative — a holdout render per instance — is too slow for the MVP.)

@@ -8,7 +8,8 @@ a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any clust
 **throughput (images/hour)** is measured and reported on every run.
 
 > **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
-> package, config schema and seed derivation (M1). Commands below that are not implemented
+> package, config schema and seed derivation (M1); the tabletop scene generator writing
+> flattened USD (M2). Commands below that are not implemented
 > yet print a "not implemented yet" message.
 
 ---
@@ -101,11 +102,12 @@ MVP work is tracked in the issues labelled
 
 ## 🚀 Getting Started
 
-Works today (M1):
+Works today (M1–M2):
 
 ```bash
 pip install -e '.[dev]'
 usd-synth config --config configs/tabletop.yaml   # validate a config, print its SHA-256
+usd-synth scenes --config configs/tabletop.yaml --seed 42 --count 5 --out out/scenes
 pytest                                            # run the test suite
 ```
 

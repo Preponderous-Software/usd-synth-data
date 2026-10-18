@@ -18,6 +18,19 @@ def _cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scenes(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .scenegen import write_scene
+
+    cfg = load_config(args.config)
+    config_dir = Path(args.config).resolve().parent
+    for index in range(args.start, args.start + args.count):
+        path = write_scene(cfg, args.seed, index, args.out, config_dir)
+        print(path)
+    return 0
+
+
 def _not_yet(milestone: str):
     def run(args: argparse.Namespace) -> int:
         print(f"usd-synth {args.command}: not implemented yet ({milestone})", file=sys.stderr)
@@ -39,8 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resolved", action="store_true", help="also print the resolved config")
     p.set_defaults(func=_cmd_config)
 
+    p = sub.add_parser("scenes", help="generate USD scenes only")
+    p.add_argument("--config", required=True, help="path to a YAML config")
+    p.add_argument("--seed", type=int, required=True, help="dataset seed (>= 0)")
+    p.add_argument("--count", type=int, required=True, help="number of scenes")
+    p.add_argument("--start", type=int, default=0, help="first scene index (default 0)")
+    p.add_argument("--out", required=True, help="directory for scene_NNNNNN.usda files")
+    p.set_defaults(func=_cmd_scenes)
+
     stubs = {
-        "scenes": ("generate USD scenes only", "M2"),
         "render": ("render USD scenes with Blender", "M3"),
         "generate": ("generate, render and label a dataset", "M5"),
         "reproduce": ("regenerate one image of a dataset", "M5"),
