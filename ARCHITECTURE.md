@@ -10,12 +10,13 @@ milestone must confirm with a test before relying on them.
 |---|---|---|
 | `config` | host Python | Load YAML, validate with a Pydantic model, compute a stable config hash. |
 | `seeds` | host Python | Derive per-scene and per-stage random streams from `(dataset seed, scene index)`. |
-| `scenegen` | host Python + `usd-core` | Sample a scene from the config and write a flattened `.usda` stage. One module per scenario (`tabletop` in the MVP). |
+| `scenegen` | host Python + `usd-core` | Sample a scene from the config and write a flattened `.usda` stage. One module per scenario (`tabletop` in the MVP; an outdoor `terrain` scenario is planned after it). |
 | `render_worker` | Blender's bundled Python (`blender -b --python`) | Import the stage, assign pass indices, configure Cycles, render RGB + auxiliary passes. Imports only `bpy`, the standard library and Blender's bundled `numpy`. |
 | `labels` | host Python | Turn auxiliary passes into instance masks, boxes and depth; write COCO. |
 | `pipeline` | host Python | Orchestrate generate → render → label for a shard; write per-scene outputs atomically; timing. |
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
-| `cli` | host Python | `usd-synth scenes | render | generate | reproduce | merge | k8s-manifest`. |
+| `storage` | host Python | Output sink behind one small interface (put file, mark scene done, list done scenes, read shard outputs). Local-filesystem sink for M1–M6; S3-compatible object-storage sink added in M7. |
+| `cli` | host Python | `usd-synth scenes | render | generate | reproduce | merge | k8s-manifest`. `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
 | `deploy/k8s` | Kubernetes | Indexed Job template and merge Job template. |
 
 Two Python environments exist on purpose: the host environment (scene generation, labelling,
@@ -39,6 +40,13 @@ flowchart LR
 Per scene *i*, the pipeline writes into `shards/<k>/scenes/<i>/` and only marks the scene
 complete (an empty `DONE` file written last) after every output exists. A re-run of the same
 shard skips completed scenes, so a retried pod resumes rather than starting over.
+
+The shard and dataset paths are relative to the output sink, not to a mounted filesystem.
+For M1–M6 the sink is a local directory. From M7 the same layout can live under a prefix in
+an S3-compatible bucket: each pod renders into its own local scratch directory, uploads a
+scene's outputs, and uploads the `DONE` object last; resume and merge find completed scenes
+by listing `DONE` objects. Object stores have no atomic rename, so "`DONE` is written last"
+is the only completion signal the design relies on.
 
 ## Determinism and seeds
 
@@ -219,9 +227,9 @@ flowchart TB
       job --> p0[pod idx 0 → scenes 0..k-1]
       job --> p1[pod idx 1 → scenes k..2k-1]
       job --> pn[pod idx N-1]
-      p0 & p1 & pn --> vol[(shared volume: shards/idx/...)]
-      vol --> mj[merge Job]
-      mj --> out[(dataset)]
+      p0 & p1 & pn -->|upload per scene, DONE last| s3[(S3-compatible bucket:\nprefix/shards/idx/...)]
+      s3 --> mj[merge Job]
+      mj -->|prefix/dataset/...| s3
     end
 ```
 
@@ -231,11 +239,22 @@ flowchart TB
 - **Retries per shard** with `backoffLimitPerIndex` (GA since Kubernetes v1.33, per the
   [Kubernetes blog](https://kubernetes.io/blog/2025/05/13/kubernetes-v1-33-jobs-backoff-limit-per-index-goes-ga/)).
   Because completed scenes are skipped, a retried pod only renders what is left.
-- **Output** goes to a shared volume (a ReadWriteMany PersistentVolumeClaim on multi-node
-  clusters; on a single-node `kind` cluster a ReadWriteOnce volume is enough). Object storage is
-  post-MVP.
-- **Merge** runs as a second Job (or `usd-synth merge` locally against the same volume) after
-  the Indexed Job reports `Complete`.
+- **Output** goes to S3-compatible object storage, under `s3://<bucket>/<prefix>/shards/<k>/...`
+  (decided 2026-10-17; see [Decisions](#decisions)). No ReadWriteMany volume is required, so
+  the same manifest works on single-node and multi-node clusters. Each pod renders into a local
+  scratch directory (an `emptyDir`), uploads each finished scene's files, then uploads the
+  scene's `DONE` object. A retried pod lists the `DONE` objects under its shard prefix and
+  skips those scenes.
+- **Endpoint and credentials** come from a Kubernetes Secret referenced by the manifest
+  (endpoint URL, access key, secret key), never from the dataset config, so the config hash
+  does not change between storage targets. Any S3-compatible endpoint works; the M7 test uses
+  MinIO deployed inside the `kind` cluster.
+- **Merge** runs as a second Job (or `usd-synth merge` locally, pointed at the same bucket
+  prefix) after the Indexed Job reports `Complete`. It reads the shard outputs through the
+  `storage` interface and writes the merged dataset under `s3://<bucket>/<prefix>/dataset/`.
+  The merge logic itself is the M6 code; only the sink differs.
+- **Local runs (M1–M6)** keep the local-filesystem sink with the identical layout, so nothing
+  before M7 needs an object store.
 - **Resources**: CPU requests/limits set from the config; Blender is told the thread count
   matching the CPU limit so pods do not oversubscribe a node. GPU shards add a
   `nvidia.com/gpu`-style resource request only when `render.device: gpu`.
@@ -292,6 +311,8 @@ Versions are the latest available at planning time (October 2026) and become pin
 | [Pillow](https://pypi.org/project/pillow/) | 13.0 | labels | PNG writing (RGB, 16-bit depth). |
 | pytest, ruff | 9.1, 0.17 | dev | |
 | [kind](https://github.com/kubernetes-sigs/kind) | 0.33 | M7 integration test | Any conformant cluster ≥ v1.33 works for real runs. |
+| S3 client library | chosen and pinned in M7 | `storage` (S3 sink) | Host-side only; must accept a custom endpoint URL so any S3-compatible store works. |
+| [MinIO](https://github.com/minio/minio) | pinned in M7 | M7 integration test | S3-compatible object store run inside the `kind` cluster. |
 
 ## Testing strategy
 
@@ -308,8 +329,35 @@ Versions are the latest available at planning time (October 2026) and become pin
   (MVP acceptance criterion 6). Runs in CI on CPU.
 - **End-to-end:** `usd-synth generate --count 4` at 160×120 and low samples, then
   `reproduce` on one image.
-- **Cluster:** a `kind`-based job (CI-optional, documented to run locally) that runs a 4-shard
-  Indexed Job and compares the merged dataset with a local run.
+- **Storage sinks:** the same resume/merge tests run against the local-filesystem sink
+  (M6) and, from M7, against a MinIO bucket, so both sinks honour the same `DONE`-last
+  contract.
+- **Cluster:** a `kind`-based job (CI-optional, documented to run locally) that deploys MinIO
+  in the cluster, runs a 4-shard Indexed Job writing to it, and compares the merged dataset
+  with a local run.
+
+## Decisions
+
+Recorded 2026-10-17. Each entry was previously an open question or an unstated assumption.
+
+1. **Kubernetes fan-out stays in the MVP as M7**, the last milestone, and is tested on a local
+   `kind` cluster. Milestones M1–M6 work and are tested on a single machine without a cluster
+   (see [MVP.md](MVP.md)).
+2. **Second scenario (post-MVP): outdoor terrain** — procedurally generated terrain with
+   scattered vegetation and props, added as a second `scenegen` module behind the same config
+   and scene-builder interface. It replaces the earlier plan of indoor rooms as the second
+   scenario; indoor rooms remain a possible later scenario. Rendering cost per image is
+   expected to be markedly higher than tabletop (larger extents, much more geometry,
+   vegetation), which the throughput report will quantify.
+3. **Physics settling: yes, post-MVP**, after M7. Objects are dropped and simulated to rest
+   before rendering. The engine (Blender rigid-body or PyBullet) is not chosen yet. Whatever
+   engine is used, the settle step must be driven by its own seeded stage stream and write the
+   settled poses into the `.usda`, so a scene stays reproducible from its seed and the stage
+   remains the single contract with the renderer.
+4. **Cluster storage: S3-compatible object storage.** The Kubernetes path writes shard outputs
+   and the merged dataset to an S3-compatible bucket (MinIO on `kind` for tests); no
+   ReadWriteMany volume is required. A local-filesystem sink with the same layout stays the
+   only sink for M1–M6 (see [Kubernetes job topology](#kubernetes-job-topology)).
 
 ## Open questions
 
@@ -318,15 +366,11 @@ Versions are the latest available at planning time (October 2026) and become pin
 2. **Custom property placement on import.** Do `userProperties` attributes import onto the
    Blender object or its mesh data? The prim-name fallback covers both cases, but the cleaner
    path should be confirmed. (M3)
-3. **Physics settling.** Is rejection-sampled placement enough for bin-picking realism, or is
-   a physics settle step (e.g. PyBullet, as Kubric uses) needed soon after the MVP?
-4. **Asset sources.** Which openly licensed object/texture/HDRI collections to recommend in
+3. **Asset sources.** Which openly licensed object/texture/HDRI collections to recommend in
    docs (license must permit dataset redistribution)? The MVP ships only procedural primitives.
-5. **Visible-fraction estimate.** Is the projected-3D-box area a good enough denominator for
+4. **Visible-fraction estimate.** Is the projected-3D-box area a good enough denominator for
    `min_visible_fraction`, or is a per-instance unoccluded render worth its cost?
-6. **Shared storage.** RWX volumes are not available on every cluster; should object storage
-   (S3-compatible) move into the MVP for the cluster path?
-7. **Batch size per Blender process.** What batch size balances start-up amortization against
+5. **Batch size per Blender process.** What batch size balances start-up amortization against
    memory growth and retry granularity?
-8. **Second backend.** If a Replicator backend is added later, how much of the label pipeline
+6. **Second backend.** If a Replicator backend is added later, how much of the label pipeline
    can be shared, given Replicator has its own annotators?

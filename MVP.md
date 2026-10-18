@@ -32,7 +32,9 @@ never exercised, and is likely to need breaking changes later.
 It is placed **last** so that every earlier milestone works and is tested on a single machine
 without a cluster. The Kubernetes milestone adds only a thin layer: one image, one Indexed Job
 manifest, and a merge step that already exists for local multi-process runs (milestone 6).
-If it slips, milestones 1–6 are still a usable, releasable tool.
+If it slips, milestones 1–6 are still a usable, releasable tool. This was confirmed as a
+decision on 2026-10-17 (ARCHITECTURE.md, Decisions): M7 stays in the MVP and is tested on a
+local `kind` cluster.
 
 ## In scope
 
@@ -51,20 +53,26 @@ If it slips, milestones 1–6 are still a usable, releasable tool.
 - Throughput measurement: images/hour and per-stage timing, written to `throughput.json` and
   printed at the end of every run.
 - Sharding: local multi-process sharding and Kubernetes Indexed Job fan-out with a merge step.
+- Output sinks: a local filesystem directory (M1–M6) and, for the Kubernetes path, an
+  S3-compatible object store (M7; MinIO on `kind` for tests). No ReadWriteMany volume is needed.
 - Container image for the render worker.
 - Tests at every stage (see ARCHITECTURE.md, Testing strategy).
 
 ## Out of scope (post-MVP)
 
-- The **indoor rooms** scenario (walls, floor, furniture placement). The config schema and
-  scene-builder interface are designed so it can be added as a second scenario.
-- Physics-settled object piles (e.g. dropping objects with a physics engine before rendering).
+- Additional scenarios: the **outdoor terrain** scenario is the planned second scenario (see
+  [Post-MVP roadmap](#post-mvp-roadmap)); **indoor rooms** (walls, floor, furniture placement)
+  remain a possible later one. The config schema and scene-builder interface are designed so
+  scenarios can be added without changing the other stages.
+- Physics-settled object piles (planned directly after the MVP; see
+  [Post-MVP roadmap](#post-mvp-roadmap)).
 - Alternative render backends (Omniverse Replicator, Blender EEVEE, others).
 - Other label types: 6-DoF object poses, keypoints, surface normals, optical flow, amodal masks.
 - Other output formats (BOP, KITTI, YOLO txt); converters can come later.
 - Camera intrinsics/lens distortion models beyond a pinhole camera.
 - Autoscaling, job queues, or a scheduler beyond a single Indexed Job.
-- Cloud object storage backends (the MVP writes to a filesystem path / volume).
+- Storage backends beyond the local filesystem and one S3-compatible sink (e.g. provider-specific
+  APIs, other protocols).
 - A web UI or dataset browser.
 
 ## Acceptance criteria
@@ -97,7 +105,7 @@ documented, repeatable manual check:
 9. **Throughput report.** Every run writes `throughput.json` with total images, wall time,
    images/hour, and per-stage mean/p95 times, and prints a one-line summary.
 10. **Kubernetes fan-out.** On a local `kind` cluster, a 4-shard Indexed Job renders a
-    small dataset; after the merge step the merged `annotations.json` is equivalent (same
+    small dataset into an S3-compatible bucket (MinIO running in the cluster); after the merge step the merged `annotations.json` is equivalent (same
     images, same annotations up to ID renumbering rules) to a single-process local run with
     the same config and seed.
 11. **Docs.** README quick-start commands run as written.
@@ -154,12 +162,29 @@ Tracked in [#6](https://github.com/Preponderous-Software/usd-synth-data/issues/6
 
 Per-stage timers, `throughput.json`, end-of-run summary; `--shard-index/--shard-count` to run a
 subset; local multi-process sharding; `usd-synth merge` to combine shard outputs into one COCO
-dataset. Covers criteria 3 (at scale) and 9.
+dataset. Resume and merge go through a small output-sink interface (local filesystem only
+here) so M7 can add an S3-compatible sink without changing them. Covers criteria 3 (at scale)
+and 9.
 
 ### M7. Kubernetes Indexed Job fan-out
 
 Tracked in [#7](https://github.com/Preponderous-Software/usd-synth-data/issues/7).
 
 Indexed Job manifest template (one pod per shard, `JOB_COMPLETION_INDEX` → shard index),
-shared output volume, a merge step after completion, and a `kind`-based integration test and
-throughput report from the cluster run. Covers criteria 10 and the rest of 11.
+an S3-compatible object-storage sink for shard outputs and the merged dataset (MinIO on
+`kind` for tests; no ReadWriteMany volume), a merge step after completion, and a `kind`-based
+integration test and throughput report from the cluster run. Covers criteria 10 and the rest
+of 11.
+
+## Post-MVP roadmap
+
+Decided 2026-10-17 (ARCHITECTURE.md, Decisions). Not tracked as `mvp` issues.
+
+- **Physics settling (after M7).** Drop objects and simulate them to rest before rendering,
+  so piles and bins look physically plausible. Engine not chosen yet (Blender rigid-body or
+  PyBullet). The settled poses are written into the `.usda`, keeping scenes seed-reproducible.
+- **Outdoor terrain scenario (second scenario).** Procedural terrain with scattered
+  vegetation and props, as a second scene-builder module next to tabletop. Expected to cost
+  noticeably more render time per image than tabletop (larger scenes, far more geometry);
+  the throughput report will measure by how much.
+- **Indoor rooms (later idea).** Walls, floor and furniture placement; not scheduled.
