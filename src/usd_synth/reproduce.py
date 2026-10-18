@@ -13,8 +13,10 @@ from pathlib import Path
 import numpy as np
 
 from .config import parse_config
-from .pipeline import assemble, image_name, run_shard
+from .merge import merge
+from .pipeline import image_name, prepare_shard, run_shard
 from .scenegen import scene_filename
+from .storage import LocalSink
 
 RGB_MAD_THRESHOLD = 1.0  # mean absolute difference, 0-255 levels, averaged over all channels
 
@@ -36,8 +38,10 @@ def reproduce(dataset: Path, image_id: int, out: Path, blender: str, threads=Non
     index, seed = entry["scene_index"], manifest["dataset_seed"]
     config_dir = Path(manifest["config_dir"])
 
-    run_shard(cfg, config_dir, seed, [index], out, blender, threads=threads)
-    new_coco = assemble(cfg, config_dir, seed, out, [index])
+    sink, only = LocalSink(out), range(index, index + 1)
+    prepare_shard(sink, cfg, config_dir, seed, len(manifest["images"]), 1, 0, indices=only)
+    run_shard(cfg, config_dir, seed, only, sink, blender, threads=threads)
+    new_coco = merge(sink, expected=only)["coco"]
     old_coco = json.loads((dataset / "annotations.json").read_text(encoding="utf-8"))
 
     from PIL import Image

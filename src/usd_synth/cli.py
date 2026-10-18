@@ -56,38 +56,108 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_generate(args: argparse.Namespace) -> int:
-    import time
+def _shard_worker(job: dict) -> tuple[int, int]:
+    """Run one shard in a worker process (``--workers``); returns (rendered, skipped)."""
+    from pathlib import Path
+
+    from .pipeline import run_shard
+    from .storage import open_sink
+
+    cfg = load_config(job["config"])
+    result = run_shard(
+        cfg, Path(job["config_dir"]), job["seed"], job["indices"], open_sink(job["out"]),
+        job["blender"], shard=job["shard"], threads=job["threads"], batch_size=job["batch_size"],
+    )  # fmt: skip
+    return len(result.rendered), len(result.skipped)
+
+
+def _validate_and_report(sink, merged: dict) -> int:
+    import tempfile
     from pathlib import Path
 
     from .coco import validate_coco
-    from .pipeline import assemble, check_run, run_shard
+    from .throughput import summary_line
+
+    with tempfile.TemporaryDirectory() as tmp:
+        local = Path(tmp) / "annotations.json"
+        sink.get_file(sink.dataset_prefix + "annotations.json", local)
+        errors = validate_coco(local)
+    for e in errors:
+        print(f"invalid COCO: {e}", file=sys.stderr)
+    coco = merged["coco"]
+    print(
+        f"dataset: {len(coco['images'])} images, {len(coco['annotations'])} annotations -> "
+        f"{sink.describe(sink.dataset_prefix)}"
+    )
+    print(summary_line(merged["throughput"]))
+    return 1 if errors else 0
+
+
+def _cmd_generate(args: argparse.Namespace) -> int:
+    import multiprocessing
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    from pathlib import Path
+
+    from .merge import merge
+    from .pipeline import prepare_shard, run_shard
     from .render import find_blender
+    from .storage import open_sink, shard_prefix
 
     cfg = load_config(args.config)
     check_seed(args.seed)
     if args.count < 1:
         raise ValueError("--count must be >= 1")
-    out = Path(args.out)
+    if (args.shard_index is None) != (args.shard_count is None):
+        raise ValueError("--shard-index and --shard-count must be given together")
+    if args.workers < 1:
+        raise ValueError("--workers must be >= 1")
+    sink = open_sink(args.out)
     config_dir = Path(args.config).resolve().parent
     blender = find_blender(args.blender)
-    check_run(out, cfg, args.seed, args.count)
-    indices = list(range(args.count))
-    t0 = time.time()
-    result = run_shard(
-        cfg, config_dir, args.seed, indices, out, blender,
-        threads=args.threads, batch_size=args.batch_size,
-    )  # fmt: skip
-    coco = assemble(cfg, config_dir, args.seed, out, indices)
-    errors = validate_coco(out / "annotations.json")
-    for e in errors:
-        print(f"invalid COCO: {e}", file=sys.stderr)
-    print(
-        f"{len(coco['images'])} images, {len(coco['annotations'])} annotations "
-        f"({len(result.rendered)} rendered, {len(result.skipped)} already done) "
-        f"in {time.time() - t0:.1f} s -> {out}"
-    )
-    return 1 if errors else 0
+    threads = args.threads if args.threads is not None else cfg.render.threads
+
+    if args.shard_index is not None:  # one shard only (e.g. one Kubernetes pod); merge later
+        k, n = args.shard_index, args.shard_count
+        rng = prepare_shard(sink, cfg, config_dir, args.seed, args.count, n, k)
+        result = run_shard(
+            cfg, config_dir, args.seed, rng, sink, blender,
+            shard=k, threads=threads, batch_size=args.batch_size,
+        )  # fmt: skip
+        print(
+            f"shard {k}/{n}: scenes [{rng.start}, {rng.stop}): {len(result.rendered)} rendered, "
+            f"{len(result.skipped)} already done -> {sink.describe(shard_prefix(k))}"
+        )
+        return 0
+
+    n = args.workers
+    if n > 1 and not threads:  # 0 = Blender decides, which would oversubscribe the CPU
+        threads = max(1, (os.cpu_count() or n) // n)
+    ranges = [prepare_shard(sink, cfg, config_dir, args.seed, args.count, n, k) for k in range(n)]
+    if n == 1:
+        run_shard(
+            cfg, config_dir, args.seed, ranges[0], sink, blender,
+            shard=0, threads=threads, batch_size=args.batch_size,
+        )  # fmt: skip
+    else:
+        jobs = [
+            {"config": str(args.config), "config_dir": str(config_dir), "seed": args.seed,
+             "indices": list(r), "out": str(args.out), "blender": blender, "shard": k,
+             "threads": threads, "batch_size": args.batch_size}
+            for k, r in enumerate(ranges)
+        ]  # fmt: skip
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=n, mp_context=ctx) as pool:
+            list(pool.map(_shard_worker, jobs))
+    return _validate_and_report(sink, merge(sink))
+
+
+def _cmd_merge(args: argparse.Namespace) -> int:
+    from .merge import merge
+    from .storage import open_sink
+
+    sink = open_sink(args.out)
+    return _validate_and_report(sink, merge(sink))
 
 
 def _cmd_reproduce(args: argparse.Namespace) -> int:
@@ -155,6 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--blender", help="Blender binary (default: $USD_SYNTH_BLENDER or PATH)")
     p.add_argument("--threads", type=int, help="override render.threads")
     p.add_argument("--batch-size", type=int, help="override render.batch_size")
+    p.add_argument("--workers", type=int, default=1, help="local worker processes (shards)")
+    p.add_argument("--shard-index", type=int, help="run only this shard (then use merge)")
+    p.add_argument("--shard-count", type=int, help="total number of shards")
     p.set_defaults(func=_cmd_generate)
 
     p = sub.add_parser("reproduce", help="regenerate one image of a dataset and compare")
@@ -165,8 +238,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--threads", type=int, help="override render.threads")
     p.set_defaults(func=_cmd_reproduce)
 
+    p = sub.add_parser("merge", help="merge shard outputs into one dataset")
+    p.add_argument("--out", required=True, help="run directory holding shards/ (as for generate)")
+    p.set_defaults(func=_cmd_merge)
+
     stubs = {
-        "merge": ("merge shard outputs into one dataset", "M6"),
         "k8s-manifest": ("render Kubernetes Job manifests", "M7"),
     }
     for name, (help_text, milestone) in stubs.items():
@@ -182,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as err:
         print(err, file=sys.stderr)
         return 1
-    except (RenderError, ValueError) as err:  # e.g. Blender failed, an out-of-range seed
+    except (RenderError, ValueError) as err:  # Blender failed, bad seed, MergeError, ...
         print(f"usd-synth: {err}", file=sys.stderr)
         return 1
     except FileNotFoundError as err:
