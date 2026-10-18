@@ -60,13 +60,16 @@ overall and per stage — is measured on every run and written next to the datas
   samples or a smaller resolution is measured rather than assumed.
 - **Runs anywhere.** The default renderer runs on CPU, so the full pipeline works on a laptop
   and in CI; a GPU only makes it faster. The Kubernetes fan-out uses only built-in Job
-  features, so it runs on any conformant cluster, including a local `kind` cluster.
+  features plus any S3-compatible object store (no shared ReadWriteMany volume), so it runs on
+  any conformant cluster, including a local `kind` cluster with MinIO.
 
 ## Non-goals
 
-- **Not a physics simulator.** Objects are placed by sampling plus simple rejection tests
-  (non-overlap, resting on a support surface). Physically settled piles, articulated objects
-  and dynamics are out of scope for the MVP; see ARCHITECTURE.md open questions.
+- **Not a physics simulator.** In the MVP, objects are placed by sampling plus simple
+  rejection tests (non-overlap, resting on a support surface). A physics settle step (objects
+  dropped and simulated to rest) is planned after the MVP, only to produce resting poses for
+  still images; articulated objects and dynamics stay out of scope. See MVP.md, Post-MVP
+  roadmap.
 - **Not a training framework.** The output is a dataset on disk. Training and evaluating models
   on it is left to the user's existing tools.
 - **Not a photorealism benchmark.** The goal is useful variety and correct labels, not
