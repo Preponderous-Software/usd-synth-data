@@ -22,6 +22,39 @@ from .tabletop import FLOOR_SIZE_M, FLOOR_Z_M, Instance, Material, Scene
 DECIMALS = 6
 NS = "userProperties:usd_synth:"
 DOC = "usd-synth-data scene"
+SMOOTH_ANGLE_DEG = 30.0
+
+
+def crease_normals(data: MeshData, angle_deg: float = SMOOTH_ANGLE_DEG) -> np.ndarray:
+    """Face-varying normals: smooth across edges flatter than ``angle_deg``, sharp elsewhere.
+
+    Without authored normals Blender's importer shades every mesh smooth, which turns boxes
+    and bin walls into rounded blobs.
+    """
+    pts = data.points
+    counts = np.asarray(data.face_counts)
+    vert = np.asarray(data.face_indices)
+    offsets = np.concatenate([[0], np.cumsum(counts)[:-1]])
+    face_normals = np.zeros((len(counts), 3))
+    for c in np.unique(counts):  # vectorized per polygon size: sum of a triangle fan
+        faces = np.flatnonzero(counts == c)
+        p = pts[vert[offsets[faces, None] + np.arange(c)]]
+        face_normals[faces] = np.cross(p[:, 1:-1] - p[:, :1], p[:, 2:] - p[:, :1]).sum(axis=1)
+    face_normals /= np.maximum(np.linalg.norm(face_normals, axis=1, keepdims=True), 1e-12)
+
+    face_of = np.repeat(np.arange(len(counts)), counts)  # face of each corner
+    order = np.argsort(vert, kind="stable")
+    sorted_vert = vert[order]
+    starts = np.flatnonzero(np.r_[True, sorted_vert[1:] != sorted_vert[:-1]])
+    sizes = np.diff(np.r_[starts, len(vert)])
+    cos_limit = np.cos(np.radians(angle_deg))
+    out = np.zeros((len(vert), 3))
+    for g in np.unique(sizes):  # corners sharing a vertex, grouped by how many share it
+        members = order[starts[sizes == g, None] + np.arange(g)]  # (groups, g)
+        fn = face_normals[face_of[members]]  # (groups, g, 3)
+        near = np.einsum("aik,ajk->aij", fn, fn) >= cos_limit
+        out[members] = np.einsum("aij,ajk->aik", near.astype(float), fn)
+    return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-12)
 
 
 def _r(value) -> float:
@@ -76,6 +109,8 @@ def _mesh(stage: Usd.Stage, path: str, data: MeshData, material, offset=None, uv
     mesh.CreateFaceVertexCountsAttr(Vt.IntArray(data.face_counts))
     mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(data.face_indices))
     mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    mesh.CreateNormalsAttr(Vt.Vec3fArray([_vec3(n) for n in crease_normals(data)]))
+    mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     mesh.CreateExtentAttr(Vt.Vec3fArray([_vec3(lo), _vec3(hi)]))
     if uv:  # planar projection, enough for random texture assignment

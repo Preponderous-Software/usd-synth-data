@@ -44,3 +44,19 @@ def test_box_faces_point_outward():
         pos += n
         normal = np.cross(p[1] - p[0], p[2] - p[0])
         assert np.dot(normal, p.mean(axis=0)) > 0
+
+
+def test_crease_normals_flat_box_smooth_sphere():
+    from usd_synth.scenegen.usd_writer import crease_normals
+
+    box = primitives.box([1, 2, 3])
+    normals = crease_normals(box)
+    assert len(normals) == len(box.face_indices)
+    # every box corner keeps its own face's axis-aligned normal (90 degree edges are sharp)
+    assert np.allclose(np.abs(normals).max(axis=1), 1.0)
+    sphere = primitives.sphere(1.0)
+    normals = crease_normals(sphere)
+    # smooth: the normal at a sphere vertex points along the vertex position
+    pts = sphere.points[sphere.face_indices]
+    radial = pts / np.linalg.norm(pts, axis=1, keepdims=True)
+    assert np.min(np.sum(normals * radial, axis=1)) > 0.99
