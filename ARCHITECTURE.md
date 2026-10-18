@@ -11,7 +11,7 @@ milestone must confirm with a test before relying on them.
 | `config` | host Python | Load YAML, validate with a Pydantic model, compute a stable config hash. |
 | `seeds` | host Python | Derive per-scene and per-stage random streams from `(dataset seed, scene index)`. |
 | `scenegen` | host Python + `usd-core` | Sample a scene from the config and write a flattened `.usda` stage. One module per scenario (`tabletop` in the MVP; an outdoor `terrain` scenario is planned after it). |
-| `render_worker` | Blender's bundled Python (`blender -b --python`) | Import the stage, assign pass indices, configure Cycles, render RGB + auxiliary passes. Imports only `bpy`, the standard library and Blender's bundled `numpy`. |
+| `render_worker` | Blender's bundled Python (`blender -b --python`) | `blender_worker.py`: for each scene of a batch, reset to an empty file, import the stage, assign pass indices, configure Cycles (device, samples, denoiser, seed, threads, resolution), render, and write `rgb.png`, `aux.exr` (multilayer: Combined, Depth, Object Index) and `render.json` (timings, Blender version, device). Imports only `bpy` and the standard library. The host side (`render.py`) reads per-scene inputs from the stage and passes them as a JSON job; `render.batch_size` scenes share one Blender process. |
 | `labels` | host Python | Turn auxiliary passes into instance masks, boxes and depth; write COCO. |
 | `pipeline` | host Python | Orchestrate generate → render → label for a shard; write per-scene outputs atomically; timing. |
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
@@ -130,8 +130,22 @@ Design choices driven by Blender's USD importer, per the
   Principled BSDF). MaterialX is not relied on.
 - The importer can import custom attributes in the `userProperties` namespace as Blender custom
   properties. The render worker reads `instance_id` from those properties, and **falls back to
-  parsing the prim/object name** if the property is missing. Whether properties land on the
-  object or its data block is **verify in M3**.
+  parsing the prim/object name** if the property is missing. **Verified in M3 (Blender
+  5.2.2):** with the importer's default `merge_parent_xform`, an instance Xform and its single
+  Mesh child become one Blender object named after the *child* (`inst_0001_geom`), and the
+  Xform's `userProperties:usd_synth:*` attributes land on that **object** as `usd_synth:*`
+  custom properties (camera attributes land on the camera *data*). The name fallback therefore
+  matches `inst_NNNN` / `dis_NNNN` as a prefix. Tested by
+  `tests/test_render.py::test_instance_ids_come_from_custom_properties_on_the_object`, which
+  also renders a copy with the attribute stripped.
+- Other importer behaviour found in M3 and handled by the worker: camera focal length and
+  aperture are multiplied by 100 on import (unit conversion), so the worker sets `lens` and
+  `sensor_width` from the camera's `focal_length_mm` / `sensor_width_mm` attributes; a
+  `DomeLight` without a texture is not imported at all, so the host passes the dome's
+  intensity, colour and texture in the job JSON and the worker builds the world shader; a
+  `SphereLight` imports as a point light of `intensity × π` W (the bundled lighting range was
+  calibrated to `[30, 300]` from renders); meshes without authored normals import smooth-shaded,
+  so the generator authors face-varying normals with a 30° crease angle.
 - `PointInstancer` imports as a point cloud with Geometry Nodes instancing, which would make
   per-instance pass indices awkward. The MVP writes every labelled instance as its own prim and
   does not use `PointInstancer` for labelled objects.
@@ -177,7 +191,7 @@ materials:
   textures: []           # optional list of image paths for random texture assignment
 lighting:
   key_lights: [1, 3]
-  intensity: [200, 2000]
+  intensity: [30, 300]   # USD inputs:intensity; Blender imports a point light of intensity × π W
   color_temp_k: [2700, 6500]
   dome: { enabled: true, intensity: [0.1, 1.0], hdris: [] }
 camera:
@@ -207,8 +221,10 @@ exactly:
 2. **Masks.** `labels` reads the EXR (`OpenEXR` Python bindings), rounds the index channel to
    integers, and builds one binary mask per instance ID, encoded as COCO RLE with
    `pycocotools.mask.encode`.
-   Whether the Object Index pass is free of anti-aliasing blends at edges (needed so rounding
-   is correct) is **verify in M3**; the fallback is Cryptomatte, which Cycles also supports.
+   **Verified in M3:** in Cycles (Blender 5.2.2) the Object Index pass holds exact integers
+   with no anti-aliasing blend at edges (`test_index_pass_has_no_edge_blending`), so rounding
+   is exact and Cryptomatte is not needed; `usd_synth.passes.read_passes` still rejects a
+   non-integral index pass rather than guess.
 3. **Boxes.** Tight `[x, y, w, h]` from the mask extents (visible box, consistent with COCO).
 4. **Visibility filtering.** To avoid extra renders, the generator records each instance's
    projected box and the convex-hull area of its projected mesh points (`projected_bbox`,
@@ -219,7 +235,9 @@ exactly:
 5. **Depth.** Cycles' perspective depth pass returns planar depth along the camera's view axis
    (changed to match EEVEE/OpenGL in
    [this Cycles commit](https://developer.blender.org/rB18cda8be8768b1e4ad9c359295142272e7aac6bf));
-   **verify in M3** against a fixture plane at a known distance. Written as 16-bit PNG in
+   **verified in M3:** with the camera 1 m above a table, depth is 1.000 m ± 1 mm across the
+   whole table including the image corners, where radial distance would be about 19 % larger
+   (`test_depth_is_planar`). Written as 16-bit PNG in
    millimetres (0 = no hit / beyond `max_m`) for broad tool compatibility, with the raw float
    EXR optionally kept.
 6. **Categories.** Come from the config's object library; IDs are assigned in config order and
@@ -334,13 +352,13 @@ Versions are the latest available at planning time (October 2026) and are pinned
 |---|---|---|---|
 | Python (host) | ≥ 3.12 | everything outside Blender | numpy 2.5 requires 3.12. CI runs 3.12. |
 | [usd-core](https://pypi.org/project/usd-core/) | 26.8 | `scenegen`, tests | Pixar's OpenUSD Python wheels (`pxr`). |
-| [Blender](https://www.blender.org/download/lts/) | 5.2 LTS (5.2.2) | `render_worker` | LTS line for a 2-year fix window; run headless via `blender -b`. |
+| [Blender](https://www.blender.org/download/lts/) | 5.2 LTS (5.2.2) | `render_worker` | LTS line for a 2-year fix window; run headless via `blender -b --factory-startup --python`. Pinned with its SHA-256 in the `Dockerfile` and the CI `render tests` job; the bundled Python includes numpy and `pxr` 26.3, but the worker uses only `bpy` and the standard library. |
 | [numpy](https://pypi.org/project/numpy/) | 2.5.4 | seeds, labels | `SeedSequence` for seed derivation. |
 | [pydantic](https://pypi.org/project/pydantic/) | 2.14.1 | `config` | |
 | [PyYAML](https://pypi.org/project/PyYAML/) | 6.0.3 | `config` | |
 | [pycocotools](https://pypi.org/project/pycocotools/) | 2.0.11 | labels, tests | RLE encoding and COCO validation. |
-| [OpenEXR](https://pypi.org/project/OpenEXR/) | 3.5 | labels | Reads the multilayer EXR passes. |
-| [Pillow](https://pypi.org/project/pillow/) | 13.0 | labels | PNG writing (RGB, 16-bit depth). |
+| [OpenEXR](https://pypi.org/project/OpenEXR/) | 3.5.2 | `passes`, labels | Reads the multilayer EXR passes. |
+| [Pillow](https://pypi.org/project/pillow/) | 13.0.0 | labels, tests | PNG reading/writing (RGB, 16-bit depth). |
 | pytest, ruff | 9.1.1, 0.17.1 | dev | CI runs `ruff check`, `ruff format --check` and `pytest`. |
 | [kind](https://github.com/kubernetes-sigs/kind) | 0.33 | M7 integration test | Any conformant cluster ≥ v1.33 works for real runs. |
 | S3 client library | chosen and pinned in M7 | `storage` (S3 sink) | Host-side only; must accept a custom endpoint URL so any S3-compatible store works. |
@@ -393,11 +411,10 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
 
 ## Open questions
 
-1. **Object Index pass vs Cryptomatte.** Is the Object Index pass free of edge blending in
-   current Cycles, or should masks come from Cryptomatte from the start? (M3)
-2. **Custom property placement on import.** Do `userProperties` attributes import onto the
-   Blender object or its mesh data? The prim-name fallback covers both cases, but the cleaner
-   path should be confirmed. (M3)
+1. **Object Index pass vs Cryptomatte.** Resolved in M3: the Object Index pass is exact, no
+   Cryptomatte needed (see Label generation, step 2).
+2. **Custom property placement on import.** Resolved in M3: on the object, after the
+   importer merges the instance Xform with its mesh (see USD stage layout).
 3. **Asset sources.** Which openly licensed object/texture/HDRI collections to recommend in
    docs (license must permit dataset redistribution)? The MVP ships only procedural primitives.
 4. **Visible-fraction estimate.** Is the projected-3D-box area a good enough denominator for

@@ -34,7 +34,7 @@ materials:
   textures: []
 lighting:
   key_lights: [1, 3]
-  intensity: [200, 2000]
+  intensity: [30, 300]      # USD inputs:intensity; Blender 5.2 imports as a point light of intensity x pi W
   color_temp_k: [2700, 6500]
   dome: { enabled: true, intensity: [0.1, 1.0], hdris: [] }
 camera:
