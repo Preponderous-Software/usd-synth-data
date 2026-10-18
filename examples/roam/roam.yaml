@@ -1,0 +1,48 @@
+# Roam example: which entity classes form each labelled class, and how views are randomized.
+# Patterns are fnmatch globs on Roam entity class names (customData roam:entityClass in a
+# roam-usd stage). An entity takes the first class it matches; entities matching no class
+# (grass, cave floor, excrement) are rendered but unlabelled (pass index 0).
+width: 640
+height: 480
+samples: 64
+denoise: true
+min_visible_pixels: 20    # instances with fewer visible pixels in a view get no annotation
+ground_color: [0.42, 0.34, 0.24]   # sRGB of the room ground quads (our own, not Roam's)
+creature_box: {width: 0.7, height: 0.55}   # creature cards become boxes this size
+ground_cover: ["Leaves"]  # leaves next to no trunk (a forest room's leaf cover): flat, unlabelled
+
+classes:
+  - name: tree          # one instance per trunk, with the leaves on the four tiles around it
+    entities: ["OakWood", "JungleWood"]
+    canopy: ["Leaves"]
+  - name: stone         # mountain rock: one instance per connected outcrop
+    entities: ["Stone"]
+    connectivity: 4
+  - name: ore           # coal, iron and gold ore; adjacent ore tiles form one vein
+    entities: ["*Ore"]
+    connectivity: 8
+  - name: creature      # one instance per animal or NPC
+    entities: ["Bear", "Chicken", "Deer", "Rabbit", "Snake", "Wolf", "Npc"]
+    per_entity: true
+  - name: structure     # the home (floor, bed, chest, torch), cave entrances, fences, crops
+    entities: ["WoodFloor", "StoneFloor", "Bed", "StoneBed", "Campfire", "Torch",
+               "GoldenLantern", "Gravestone", "Fence", "Chest", "IronChest", "CaveEntrance",
+               "CaveLadder", "YoungCrop", "MatureCrop"]
+    connectivity: 8
+  - name: food          # apples, bananas and other edible items lying on the ground
+    entities: ["Apple", "Banana", "ChickenMeat", "BearMeat", "Wheat", "WheatSeed"]
+    per_entity: true
+
+views:
+  margin_tiles: 3           # cameras stay this far inside the world's edge
+  distance: [6, 22]         # horizontal distance from camera to its target tile
+  yaw_deg: [0, 360]         # bearing from camera to target (0 = north, +Y)
+  pitch_deg: [-75, -35]     # negative = looking down
+  aim_jitter_tiles: 2       # look-at point is offset from the target by up to this much
+  min_height: 3             # camera height above the ground plane
+  focal_length_mm: [20, 35]
+  sensor_width_mm: 36
+  sun_elevation_deg: [12, 75]
+  sun_azimuth_deg: [0, 360]
+  sun_intensity: [3.5, 6]
+  sky_intensity: [0.8, 1.3]

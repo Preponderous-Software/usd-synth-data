@@ -1,0 +1,30 @@
+# Barony example: board geometry and view randomization. The classes are fixed: castle,
+# village and army (one instance each); see barony_scene.py for how each is modelled.
+width: 640
+height: 480
+samples: 64
+denoise: true
+min_visible_pixels: 30     # instances with fewer visible pixels in a view get no annotation
+tile_m: 4.0                # edge of one board tile, metres
+soldiers_per_figure: 3     # an army of n soldiers shows ceil(n / 3) figures ...
+max_figures: 12            # ... up to this many
+scenery: 0.45              # chance an empty tile without an army gets trees, rocks or a field
+surround_m: 30             # meadow around the board
+owner_colors:              # sRGB banners, soldiers and tile tint per owner (0 = nobody)
+  0: [0.85, 0.82, 0.70]
+  1: [0.20, 0.42, 0.90]
+  2: [0.86, 0.20, 0.18]
+
+views:
+  margin_tiles: 0.5         # cameras stay this far inside the board's edge
+  distance: [7, 24]         # horizontal distance from camera to its target, metres
+  yaw_deg: [0, 360]
+  pitch_deg: [-65, -28]     # negative = looking down
+  aim_jitter_m: 3
+  min_height: 3
+  focal_length_mm: [24, 45]
+  sensor_width_mm: 36
+  sun_elevation_deg: [12, 75]
+  sun_azimuth_deg: [0, 360]
+  sun_intensity: [3.5, 6]
+  sky_intensity: [0.8, 1.3]

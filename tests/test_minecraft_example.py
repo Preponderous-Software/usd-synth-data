@@ -17,6 +17,7 @@ from PIL import Image
 from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 
 from usd_synth.coco import build_coco, dump_json, validate_coco
+from usd_synth.labels import encode_rle
 from usd_synth.render import scene_spec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,7 +105,7 @@ def test_build_coco_takes_explicit_categories(tmp_path):
     rec = {
         "scene_index": 0, "file_name": "images/0000.png", "depth_file": "depth/0000.png",
         "scene_file": "views/view_0000.usda", "width": 4, "height": 4,
-        "annotations": [{"category_id": 1, "segmentation": mc_synth.encode_rle(np.eye(4) > 0),
+        "annotations": [{"category_id": 1, "segmentation": encode_rle(np.eye(4) > 0),
                          "area": 4.0, "bbox": [0.0, 0.0, 4.0, 4.0], "iscrowd": 0,
                          "instance_id": 7}],
     }  # fmt: skip
