@@ -66,7 +66,8 @@ Core responsibilities:
 See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 
 - **Scenario:** tabletop / bin-picking (an outdoor terrain scenario and physics-settled
-  placement are planned after the MVP).
+  placement are planned after the MVP; [`examples/minecraft/`](examples/minecraft/) already
+  renders outdoor Minecraft terrain through the same worker, see below).
 - **Randomization:** object selection and count, poses, distractor clutter, support surface,
   materials, key/dome lighting, camera distance/elevation/azimuth/focal length.
 - **Labels:** RGB PNG, 16-bit depth PNG (millimetres), instance masks (RLE), tight boxes,
@@ -76,6 +77,24 @@ See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 - **Scale-out:** Kubernetes Indexed Job (one pod per shard) writing to S3-compatible object
   storage + merge step; local multi-process sharding (local filesystem) for single machines.
 - **Throughput:** `throughput.json` with images/hour and per-stage timings.
+
+---
+
+## 🧱 Example: Training Data from a Minecraft World
+
+[`examples/minecraft/`](examples/minecraft/) renders random views of a Minecraft world and
+labels **tree**, **water**, **ore**, **sand** and **stone**. The world is read from a terrain
+export written by [Minecraft-USD-Exporter](https://github.com/Dans-Plugins/Minecraft-USD-Exporter).
+Each connected group of blocks of a class becomes one instance. Every view gets an RGB image, a
+semantic mask, depth and COCO boxes and masks, all taken from the render's Object Index pass.
+The stock Blender worker, pass reader and COCO writer are reused; only the scene comes from
+outside the package.
+
+![Contact sheet: six random views over a Minecraft terrain export, with boxes, semantic masks and depth](docs/images/minecraft-contact-sheet.png)
+
+*Six of 24 views over a 160 × 160-block area of a fresh vanilla 26.3 world (seed 8675309),
+rendered at 640×480 with 64 samples on 4 CPU threads; see
+[`examples/minecraft/README.md`](examples/minecraft/README.md) to reproduce it.*
 
 ---
 
