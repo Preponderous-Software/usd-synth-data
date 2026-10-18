@@ -7,6 +7,12 @@ emits RGB images with exact ground truth — **2D bounding boxes, instance masks
 a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any cluster, and
 **throughput (images/hour)** is measured and reported on every run.
 
+![Contact sheet: six rendered tabletop scenes, each with its boxes, instance masks and depth](docs/images/contact-sheet.png)
+
+*Six scenes from `usd-synth generate --seed 2026` (640×480, 64 samples, denoised, about 10 s per
+image on 6 CPU threads), each beside the ground truth the pipeline wrote for it; rebuild with
+[`scripts/contact_sheet.py`](scripts/contact_sheet.py).*
+
 > **Status: MVP complete (M1–M7).** Scene generation, headless rendering, labels, COCO output,
 > reproduce, throughput reporting, local sharding and Kubernetes fan-out to S3-compatible
 > storage all work and are tested in CI (including a `kind` cluster run). See
