@@ -11,7 +11,8 @@ a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any clust
 > package, config schema and seed derivation (M1); the tabletop scene generator writing
 > flattened USD (M2); the headless Blender Cycles render worker and its container image (M3);
 > ground-truth labels, depth PNGs, the COCO writer/validator and the manifest (M4); the
-> end-to-end `generate` pipeline with resume, and `reproduce` (M5). Commands below that are not implemented
+> end-to-end `generate` pipeline with resume, and `reproduce` (M5); throughput reports, local
+> sharding with `--workers` / `--shard-index`, and `merge` (M6). Commands below that are not implemented
 > yet print a "not implemented yet" message.
 
 ---
@@ -123,9 +124,23 @@ usd-synth reproduce --dataset out/ds --image-id 2 --out out/repro
 ```
 
 This writes `out/ds/images/*.png`, `out/ds/depth/*.png` (16-bit millimetres),
-`out/ds/scenes/*.usda`, `out/ds/annotations.json` (COCO) and `out/ds/manifest.json`; per-scene
-work lives under `out/ds/shards/`. Re-running `generate` with the same arguments resumes and
-renders only unfinished scenes. Use `--count 200` for a pilot set.
+`out/ds/scenes/*.usda`, `out/ds/annotations.json` (COCO), `out/ds/manifest.json` and
+`out/ds/throughput.json`, and prints a one-line images/hour summary; per-scene work lives under
+`out/ds/shards/`. Re-running `generate` with the same arguments resumes and renders only
+unfinished scenes. Use `--count 200` for a pilot set.
+
+Scale out on one machine with `--workers N` (N shards in parallel, merged automatically), or
+run shards separately and merge them:
+
+```bash
+usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/big --workers 2
+usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/big2 \
+  --shard-index 0 --shard-count 2   # ...and --shard-index 1, anywhere that writes out/big2
+usd-synth merge --out out/big2
+```
+
+On a 10-core desktop CPU the bundled config renders about 300 images/hour with one process and
+4 threads, and about 475 with two (see ARCHITECTURE.md, Throughput and performance).
 
 Individual stages:
 

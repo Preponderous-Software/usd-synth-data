@@ -12,10 +12,17 @@ import yaml
 from usd_synth.cli import main
 from usd_synth.coco import validate_coco
 from usd_synth.config import parse_config
-from usd_synth.pipeline import check_run, run_shard, scene_dir
+from usd_synth.pipeline import prepare_shard, run_shard
 from usd_synth.reproduce import RGB_MAD_THRESHOLD, reproduce
+from usd_synth.storage import LocalSink, scene_prefix
 
 pytestmark = pytest.mark.blender
+
+
+def scene_dir(out, shard, index):
+    return Path(out) / scene_prefix(shard, index)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "tests" / "data" / "small.yaml"
 THREADS = int(os.environ.get("USD_SYNTH_TEST_THREADS", "4"))
@@ -66,7 +73,8 @@ def test_rerun_completes_only_remaining_scenes(dataset, blender):
     (scene_dir(out, 0, 1) / "DONE").unlink()
     shutil.rmtree(scene_dir(out, 0, 3))
     before = (scene_dir(out, 0, 0) / "timings.json").read_text()
-    result = run_shard(cfg, cfg_path.parent, 42, [0, 1, 2, 3], out, blender, threads=THREADS)
+    sink = LocalSink(out)
+    result = run_shard(cfg, cfg_path.parent, 42, [0, 1, 2, 3], sink, blender, threads=THREADS)
     assert result.rendered == [1, 3] and result.skipped == [0, 2]
     assert (scene_dir(out, 0, 0) / "timings.json").read_text() == before  # untouched
     rc = main(["generate", "--config", str(cfg_path), "--seed", "42", "--count", "4",
@@ -78,7 +86,7 @@ def test_resume_refuses_a_different_run(dataset):
     cfg_path, out = dataset
     cfg = parse_config(yaml.safe_load(cfg_path.read_text()))
     with pytest.raises(ValueError, match="different run"):
-        check_run(out, cfg, 43, 4)
+        prepare_shard(LocalSink(out), cfg, cfg_path.parent, 43, 4, 1, 0)
 
 
 def test_readme_quickstart_runs_as_written(tmp_path, monkeypatch, blender):
@@ -93,3 +101,36 @@ def test_readme_quickstart_runs_as_written(tmp_path, monkeypatch, blender):
         extra = ["--threads", str(THREADS)] if cmd[1] in ("generate", "reproduce") else []
         assert main(cmd[1:] + extra) == 0, " ".join(cmd)
     assert (tmp_path / "out" / "ds" / "annotations.json").exists()
+
+
+def test_throughput_report_is_written(dataset):
+    _, out = dataset
+    t = json.loads((out / "throughput.json").read_text())
+    assert t["images"] == 4 and t["images_per_hour"] > 0
+    assert set(t["stages"]) == {"generate", "blender_start", "import", "render", "label", "write"}
+    assert t["environment"]["blender"].startswith("5.2") and t["environment"]["device"] == "cpu"
+
+
+def test_two_workers_merge_to_the_single_process_dataset(dataset, tmp_path):
+    """MVP criterion 3 at scale: 2 local worker processes + merge == one process."""
+    cfg_path, single = dataset
+    out = tmp_path / "two"
+    rc = main(["generate", "--config", str(cfg_path), "--seed", "42", "--count", "4",
+               "--out", str(out), "--workers", "2", "--threads", "2"])  # fmt: skip
+    assert rc == 0
+    assert (out / "annotations.json").read_text() == (single / "annotations.json").read_text()
+    t = json.loads((out / "throughput.json").read_text())
+    assert [s["images"] for s in t["shards"]] == [2, 2]
+
+
+def test_shard_flags_then_merge(dataset, tmp_path):
+    cfg_path, single = dataset
+    out = tmp_path / "sharded"
+    for k in (1, 0):  # any order
+        rc = main(["generate", "--config", str(cfg_path), "--seed", "42", "--count", "4",
+                   "--out", str(out), "--shard-index", str(k), "--shard-count", "2",
+                   "--threads", str(THREADS)])  # fmt: skip
+        assert rc == 0
+    assert not (out / "annotations.json").exists()  # shards only; merge is a separate step
+    assert main(["merge", "--out", str(out)]) == 0
+    assert (out / "annotations.json").read_text() == (single / "annotations.json").read_text()

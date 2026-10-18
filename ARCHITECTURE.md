@@ -16,7 +16,7 @@ milestone must confirm with a test before relying on them.
 | `pipeline` | host Python | Orchestrate generate → render → label for a shard; write per-scene outputs atomically; timing. |
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
 | `storage` | host Python | Output sink behind one small interface (put file, mark scene done, list done scenes, read shard outputs). Local-filesystem sink for M1–M6; S3-compatible object-storage sink added in M7. |
-| `cli` | host Python | `usd-synth config | scenes | render | generate | reproduce | merge | k8s-manifest` (`config` validates a config and prints its hash). `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
+| `cli` | host Python | `usd-synth config | scenes | render | generate | reproduce | merge | k8s-manifest` (`config` validates a config and prints its hash; `generate` takes `--workers`, `--shard-index/--shard-count`, `--batch-size`, `--threads`). `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
 | `deploy/k8s` | Kubernetes | Indexed Job template and merge Job template. |
 
 Two Python environments exist on purpose: the host environment (scene generation, labelling,
@@ -42,10 +42,23 @@ Per scene *i*, the pipeline writes into `shards/<k>/scenes/<i>/` (`scene.usda`, 
 complete (an empty `DONE` file written last) after every output exists. A re-run of the same
 shard skips completed scenes, so a retried pod resumes rather than starting over; a scene
 directory without `DONE` is cleared and redone. Rendering happens in a scratch directory, so a
-crash never leaves a half-written scene that looks complete. `run.json` in the output directory
-records the config hash, seed and count, and a resume with different values is refused.
-`usd-synth generate` then copies the finished scenes into `images/`, `depth/` and `scenes/`
-and writes `annotations.json` (validated before the command exits) and `manifest.json`.
+crash never leaves a half-written scene that looks complete. Each shard's `shard.json`
+records its range, the config (resolved, with hash), seed, count and shard count, and a resume
+with different values is refused. `usd-synth merge` (run automatically by `generate` unless
+`--shard-index` is given) checks that all shards describe one run, that their ranges neither
+overlap nor leave gaps, and that every scene has `DONE`; it then copies the finished scenes
+into `images/`, `depth/` and `scenes/` and writes `annotations.json` (validated before the
+command exits), `manifest.json` (with the shard list) and `throughput.json`.
+
+Sharding: shard *k* of *n* owns `[k·size, min((k+1)·size, count))` with
+`size = ceil(count / n)`. `generate --workers N` runs N local shards as separate processes
+(and, if `render.threads` is 0, gives each Blender `cpu_count // N` threads so they do not
+oversubscribe the CPU); `generate --shard-index k --shard-count n` runs one shard and stops, for
+a later `usd-synth merge --out <dir>`. Resume and merge go through the `storage.Sink` interface
+(`put_file`, `put_bytes`, `get_bytes`, `exists`, `list`, `copy`, `mark_done`, `done_scenes`,
+`shards`) and rely only on "`DONE` is written last". `LocalSink` is the only sink before M7;
+`tests/test_storage_merge.py` runs the resume/merge contract through the interface so the S3
+sink can be checked by the same tests.
 
 The shard and dataset paths are relative to the output sink, not to a mounted filesystem.
 For M1–M6 the sink is a local directory. From M7 the same layout can live under a prefix in
@@ -348,19 +361,36 @@ Throughput is reported by every run in `throughput.json`:
 
 ```json
 {
-  "images": 200,
-  "wall_seconds": 1834.2,
-  "images_per_hour": 392.5,
-  "stages": { "generate": {"mean_s": 0.08, "p95_s": 0.12}, "blender_start": {...},
+  "images": 12,
+  "wall_seconds": 90.9,
+  "images_per_hour": 475.42,
+  "stages": { "generate": {"mean_s": 0.14, "p95_s": 0.3}, "blender_start": {...},
               "import": {...}, "render": {...}, "label": {...}, "write": {...} },
-  "environment": { "blender": "5.2.x", "device": "cpu", "threads": 8, "cpu_model": "...",
-                   "gpu": null, "samples": 64, "resolution": [640, 480] }
+  "shards": [ {"shard": 0, "images": 6, "wall_seconds": 90.9, "images_per_hour": 237.71,
+               "host": "..."}, ... ],
+  "environment": { "blender": "5.2.2 LTS", "device": "cpu", "threads": 4, "cpu_model": "...",
+                   "gpu": null, "samples": 64, "denoise": true, "resolution": [640, 480],
+                   "shard_count": 2, "hosts": ["..."] }
 }
 ```
 
-For a Kubernetes run, the merge step also computes cluster throughput as total images divided
-by (last pod finish − first pod start), alongside per-pod figures, so scheduling overhead is
-visible.
+Wall time is first scene start to last scene finish across all shards (so it includes
+start-up and scheduling gaps, and a resumed run's interruption); per-shard figures use the same
+rule within a shard. For a Kubernetes run the shards are pods, so this is the cluster
+throughput, with per-pod figures beside it. `generate` and `merge` print a one-line summary.
+`blender_start` is the Blender process start-up divided over the scenes of its batch.
+
+**Measured in M6** (bundled config: 640×480, 64 samples, OIDN denoising; Blender 5.2.2 on an
+Intel Core i9-10850K, 10 cores / 20 threads, shared with other workloads; 12 images):
+
+| Run | images/hour | render mean / p95 per image | other stages (mean) |
+|---|---|---|---|
+| 1 process, 4 Blender threads | 306.9 | 11.3 s / 12.7 s | generate 0.11 s, Blender start 0.09 s, import 0.07 s, label 0.07 s, write 0.09 s |
+| `--workers 2`, 4 threads each | 475.4 (237.7 + 241.4 per shard) | 14.5 s / 19.0 s | all under 0.15 s |
+
+Rendering is over 97 % of the time per image; Blender start-up is about 0.1 s per scene even
+with a batch of 8, so the batch size mainly trades retry granularity against process count
+(answering open question 5 for CPU rendering at this size).
 
 Expected levers, to be measured rather than assumed:
 
@@ -450,7 +480,8 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    docs (license must permit dataset redistribution)? The MVP ships only procedural primitives.
 4. **Visible-fraction estimate.** Is the projected-3D-box area a good enough denominator for
    `min_visible_fraction`, or is a per-instance unoccluded render worth its cost?
-5. **Batch size per Blender process.** What batch size balances start-up amortization against
-   memory growth and retry granularity?
+5. **Batch size per Blender process.** Measured in M6: start-up is about 0.1 s per scene, so
+   for CPU rendering at 640×480 the batch size barely affects throughput; the default of 8
+   keeps a failed batch cheap to retry. Memory growth over long batches is not yet measured.
 6. **Second backend.** If a Replicator backend is added later, how much of the label pipeline
    can be shared, given Replicator has its own annotators?
