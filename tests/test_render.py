@@ -134,3 +134,21 @@ def test_cli_render(tmp_path, blender, capsys):
     for name in ("scene_000000", "scene_000001"):
         assert (tmp_path / "r" / name / "rgb.png").exists()
         assert (tmp_path / "r" / name / "aux.exr").exists()
+
+
+def test_distractors_get_their_own_pass_index(tmp_path, blender):
+    scene = top_down_scene([(-0.1, 0.0, 0.08), (0.1, 0.0, 0.06)])
+    scene.instances[1].kind = "distractor"
+    scene.instances[1].category_id = 0
+    scene.instances[1].category_name = "distractor"
+    usd = write(scene, tmp_path / "scene_000000.usda")
+    assert "dis_0002" in usd.read_text()
+    result = render_batch(_fixture_cfg(), [scene_spec(usd, tmp_path / "o")], blender, threads=2)
+    assert result.scenes[0]["pass_indices"] == {"inst_0001_geom": 1, "dis_0002_geom": 2}
+    assert set(np.unique(read_passes(tmp_path / "o" / "aux.exr").index).tolist()) == {0, 1, 2}
+
+
+def test_timeout_is_a_render_error(tmp_path, blender):
+    usd = write(top_down_scene([(0.0, 0.0, 0.1)]), tmp_path / "scene_000000.usda")
+    with pytest.raises(RenderError, match="timed out"):
+        render_batch(_fixture_cfg(), [scene_spec(usd, tmp_path / "o")], blender, timeout=0.01)

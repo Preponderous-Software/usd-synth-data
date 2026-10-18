@@ -40,7 +40,9 @@ def instance_id(obj):
 
 
 def assign_pass_indices():
-    """Set ``pass_index`` of every labelled object (and its descendants); everything else gets 0."""
+    """Set ``pass_index`` of every instance (labelled object or distractor) and its descendants
+    to its instance ID; everything else gets 0. Distractors keep their IDs so the label stage
+    can make them ``iscrowd`` regions or omit them without re-rendering."""
     for obj in bpy.data.objects:
         obj.pass_index = 0
     assigned = {}

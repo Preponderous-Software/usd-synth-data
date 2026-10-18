@@ -215,9 +215,12 @@ The resolved config (defaults filled in) and its SHA-256 hash are stored in `man
 Labels come from renderer passes, not from re-projecting geometry, so occlusion is handled
 exactly:
 
-1. **Instance IDs.** The render worker sets each labelled object's `pass_index` to its
-   `instance_id` (distractors and the environment get 0) and enables the Cycles Object Index
-   pass. The pass is written to a multilayer EXR alongside depth.
+1. **Instance IDs.** The render worker sets the `pass_index` of every instance — labelled
+   objects *and* distractors — to its `instance_id`; the support, floor and everything else
+   get 0. Distractors keep their own IDs so the label stage can turn them into `iscrowd`
+   regions (`distractors.label: ignore`) or drop them (`omit`) without re-rendering; this is a
+   deliberate change from the original plan, where distractors shared 0 with the environment.
+   The worker enables the Cycles Object Index pass. The pass is written to a multilayer EXR alongside depth.
 2. **Masks.** `labels` reads the EXR (`OpenEXR` Python bindings), rounds the index channel to
    integers, and builds one binary mask per instance ID, encoded as COCO RLE with
    `pycocotools.mask.encode`.

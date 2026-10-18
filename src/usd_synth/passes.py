@@ -31,6 +31,6 @@ def read_passes(path: Path | str) -> Passes:
         depth = np.array(_find(channels, ".Depth.Z", ".Z"), dtype=np.float32)
         raw_index = np.array(_find(channels, "Object Index.X", "IndexOB.X"), dtype=np.float64)
     index = np.rint(raw_index).astype(np.int32)
-    if not np.allclose(raw_index, index, atol=1e-3):
+    if not np.allclose(raw_index, index, rtol=0.0, atol=1e-3):
         raise ValueError(f"{path}: object index pass is not integral (edge blending?)")
     return Passes(depth=depth, index=index)

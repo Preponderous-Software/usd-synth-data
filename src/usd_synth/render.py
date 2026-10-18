@@ -92,7 +92,12 @@ def render_batch(
             "--python-exit-code", "1", "--python", str(WORKER), "--", str(job_path),
         ]  # fmt: skip
         start = time.time()
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RenderError(
+                f"Blender worker timed out after {timeout:.0f} s on a batch of {len(specs)} scenes"
+            ) from None
     events = []
     for line in proc.stdout.splitlines():
         if line.startswith("USD_SYNTH "):
