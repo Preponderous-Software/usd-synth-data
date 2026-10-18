@@ -22,7 +22,20 @@ from .labels import coco_categories
 from .seeds import render_seed, scene_seed
 
 
-def build_coco(records: list[dict], cfg: Config, description: str = "usd-synth-data") -> dict:
+def build_coco(
+    records: list[dict],
+    cfg: Config | None,
+    description: str = "usd-synth-data",
+    categories: list[dict] | None = None,
+) -> dict:
+    """COCO dataset from scene records. Categories come from ``cfg`` unless ``categories`` (a
+    COCO ``categories`` list) is given, which lets scenarios that are not driven by a
+    :class:`Config` (such as ``examples/minecraft``) reuse the writer; ``cfg`` may then be None.
+    """
+    if categories is None:
+        if cfg is None:
+            raise ValueError("build_coco needs a config or an explicit categories list")
+        categories = coco_categories(cfg)
     indices = [r["scene_index"] for r in records]
     if len(set(indices)) != len(indices):
         raise ValueError("duplicate scene index in records")
@@ -47,7 +60,7 @@ def build_coco(records: list[dict], cfg: Config, description: str = "usd-synth-d
         "licenses": [],
         "images": images,
         "annotations": annotations,
-        "categories": coco_categories(cfg),
+        "categories": categories,
     }
 
 

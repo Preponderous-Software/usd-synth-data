@@ -1,0 +1,54 @@
+# Minecraft example: which blocks form each labelled class, and how views are randomized.
+# Patterns are fnmatch globs on namespaced block IDs. A block takes the first class it matches;
+# blocks matching no class are rendered but unlabelled (pass index 0).
+width: 640
+height: 480
+samples: 64
+denoise: true
+min_visible_pixels: 30   # instances with fewer visible pixels in a view get no annotation
+
+classes:
+  - name: tree           # trunks and canopy together; one instance per connected tree (clump)
+    blocks: ["*_log", "*_wood", "*_stem", "*_leaves", "*_hyphae", "minecraft:mangrove_roots"]
+    connectivity: 26     # leaves touch diagonally
+  - name: water
+    blocks: ["minecraft:water"]
+    connectivity: 6
+  - name: ore            # any *_ore, including deepslate and nether variants
+    blocks: ["*_ore", "minecraft:ancient_debris"]
+    connectivity: 26     # a vein is one instance
+  - name: sand           # beaches and river banks
+    blocks: ["minecraft:sand", "minecraft:red_sand", "minecraft:sandstone", "minecraft:suspicious_sand"]
+    connectivity: 6
+  - name: stone          # exposed stone and its variants (cliffs, cave walls, outcrops)
+    blocks: ["minecraft:stone", "minecraft:andesite", "minecraft:diorite", "minecraft:granite",
+             "minecraft:deepslate", "minecraft:tuff", "minecraft:cobblestone",
+             "minecraft:mossy_cobblestone", "minecraft:calcite", "minecraft:smooth_basalt"]
+    connectivity: 6
+
+# Waterlogged plants and bubble columns occupy water cells: render and label them as water.
+as_water: ["minecraft:seagrass", "minecraft:tall_seagrass", "minecraft:kelp",
+           "minecraft:kelp_plant", "minecraft:bubble_column"]
+
+# Non-cube decoration that would render as full blocks: left out of the scene.
+drop: ["minecraft:short_grass", "minecraft:tall_grass", "minecraft:fern", "minecraft:large_fern",
+       "minecraft:bush", "minecraft:firefly_bush", "minecraft:leaf_litter", "minecraft:glow_lichen",
+       "minecraft:vine", "minecraft:pointed_dripstone", "*_amethyst_bud",
+       "minecraft:amethyst_cluster", "minecraft:dandelion", "minecraft:poppy", "minecraft:peony",
+       "minecraft:lilac", "minecraft:rose_bush", "minecraft:azure_bluet", "minecraft:oxeye_daisy",
+       "minecraft:cornflower", "*_tulip", "minecraft:sugar_cane", "minecraft:snow",
+       "minecraft:torch", "minecraft:wall_torch", "minecraft:chest", "minecraft:spawner"]
+
+views:
+  margin_blocks: 8          # cameras and targets stay this far inside the export's X/Z bounds
+  distance: [14, 60]        # horizontal distance from camera to its target block
+  yaw_deg: [0, 360]         # bearing from camera to target (0 = north)
+  pitch_deg: [-50, -10]     # negative = looking down
+  aim_jitter_blocks: 6      # look-at point is offset from the target by up to this much
+  min_clearance: 2          # camera height above the nearby terrain
+  focal_length_mm: [18, 32]
+  sensor_width_mm: 36
+  sun_elevation_deg: [8, 72]  # low sun = warm light and a dusk-coloured sky
+  sun_azimuth_deg: [0, 360]
+  sun_intensity: [4, 7]       # Blender sun strength
+  sky_intensity: [0.8, 1.4]   # uniform sky (world background) strength
