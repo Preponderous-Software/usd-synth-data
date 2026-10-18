@@ -8,6 +8,8 @@ the same scenes into shards therefore assembles to the same ``annotations.json``
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import math
 from pathlib import Path
@@ -97,7 +99,8 @@ def validate_coco(path: Path | str) -> list[str]:
     from pycocotools.coco import COCO
 
     errors = []
-    coco = COCO(str(path))
+    with contextlib.redirect_stdout(io.StringIO()):  # COCO() prints progress chatter
+        coco = COCO(str(path))
     images, cats = coco.imgs, coco.cats
     for ann in coco.dataset["annotations"]:
         aid = ann["id"]

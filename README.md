@@ -10,7 +10,8 @@ a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any clust
 > **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
 > package, config schema and seed derivation (M1); the tabletop scene generator writing
 > flattened USD (M2); the headless Blender Cycles render worker and its container image (M3);
-> ground-truth labels, depth PNGs, the COCO writer/validator and the manifest (M4). Commands below that are not implemented
+> ground-truth labels, depth PNGs, the COCO writer/validator and the manifest (M4); the
+> end-to-end `generate` pipeline with resume, and `reproduce` (M5). Commands below that are not implemented
 > yet print a "not implemented yet" message.
 
 ---
@@ -103,11 +104,32 @@ MVP work is tracked in the issues labelled
 
 ## 🚀 Getting Started
 
-Works today (M1–M3; rendering needs Blender 5.2 — set `USD_SYNTH_BLENDER` or use the
-container image):
+Install the package (Python 3.12+) and point it at an official Blender 5.2 LTS Linux build
+(rendering runs on CPU; no GPU needed):
 
 ```bash
 pip install -e '.[dev]'
+export USD_SYNTH_BLENDER=/path/to/blender-5.2.2-linux-x64/blender
+```
+
+Quick start — generate a 4-image dataset at the bundled config's 640×480, then regenerate one
+image from the manifest and compare it with the original (these lines are run as written by
+`tests/test_pipeline.py`):
+
+<!-- quickstart -->
+```bash
+usd-synth generate --config configs/tabletop.yaml --seed 42 --count 4 --out out/ds
+usd-synth reproduce --dataset out/ds --image-id 2 --out out/repro
+```
+
+This writes `out/ds/images/*.png`, `out/ds/depth/*.png` (16-bit millimetres),
+`out/ds/scenes/*.usda`, `out/ds/annotations.json` (COCO) and `out/ds/manifest.json`; per-scene
+work lives under `out/ds/shards/`. Re-running `generate` with the same arguments resumes and
+renders only unfinished scenes. Use `--count 200` for a pilot set.
+
+Individual stages:
+
+```bash
 usd-synth config --config configs/tabletop.yaml   # validate a config, print its SHA-256
 usd-synth scenes --config configs/tabletop.yaml --seed 42 --count 5 --out out/scenes
 usd-synth render --config configs/tabletop.yaml --scenes out/scenes --out out/render
@@ -118,17 +140,13 @@ Or in the render worker image (Blender 5.2.2 included, CPU rendering):
 
 ```bash
 docker build -t usd-synth .
-docker run --rm -v "$PWD/out:/app/out" usd-synth scenes --config configs/tabletop.yaml \
-  --seed 42 --count 5 --out out/scenes
-docker run --rm -v "$PWD/out:/app/out" usd-synth render --config configs/tabletop.yaml \
-  --scenes out/scenes --out out/render
+docker run --rm -v "$PWD/out:/app/out" usd-synth generate --config configs/tabletop.yaml \
+  --seed 42 --count 4 --out out/ds
 ```
 
 Intended interface (later milestones):
 
 ```bash
-usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/ds
-usd-synth reproduce --dataset out/ds --image-id 137 --out /tmp/repro
 usd-synth k8s-manifest --config configs/tabletop.yaml --seed 42 --count 10000 --shards 50 \
   --out s3://datasets/tabletop-42 | kubectl apply -f -
 ```

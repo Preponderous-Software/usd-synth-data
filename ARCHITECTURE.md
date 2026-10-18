@@ -37,9 +37,15 @@ flowchart LR
     merge --> ds[(dataset: images/, depth/, scenes/,\nannotations.json, manifest.json,\nthroughput.json)]
 ```
 
-Per scene *i*, the pipeline writes into `shards/<k>/scenes/<i>/` and only marks the scene
+Per scene *i*, the pipeline writes into `shards/<k>/scenes/<i>/` (`scene.usda`, `rgb.png`,
+`depth.png`, `labels.json`, `timings.json`, optionally `aux.exr`) and only marks the scene
 complete (an empty `DONE` file written last) after every output exists. A re-run of the same
-shard skips completed scenes, so a retried pod resumes rather than starting over.
+shard skips completed scenes, so a retried pod resumes rather than starting over; a scene
+directory without `DONE` is cleared and redone. Rendering happens in a scratch directory, so a
+crash never leaves a half-written scene that looks complete. `run.json` in the output directory
+records the config hash, seed and count, and a resume with different values is refused.
+`usd-synth generate` then copies the finished scenes into `images/`, `depth/` and `scenes/`
+and writes `annotations.json` (validated before the command exits) and `manifest.json`.
 
 The shard and dataset paths are relative to the output sink, not to a mounted filesystem.
 For M1–M6 the sink is a local directory. From M7 the same layout can live under a prefix in
@@ -72,8 +78,14 @@ is the only completion signal the design relies on.
 byte-reproducible. The RGB image is reproducible to the extent the renderer is: the same
 Blender build on the same device type is expected to give identical output for the same seed
 and sample count, while CPU vs GPU or different Blender versions can differ by noise-level
-amounts (**verify in M5**; the `reproduce` test measures the difference and documents the
-threshold). The manifest records the Blender version, device and sample count for this reason.
+amounts. The manifest records the Blender version, device and sample count for this reason.
+**Measured in M5:** `usd-synth reproduce` compares the regenerated image with the original by
+mean absolute difference over all RGB channels in 8-bit levels; the threshold is **1.0**
+(`reproduce.RGB_MAD_THRESHOLD`). On the same Blender 5.2.2 build and CPU device the measured
+difference is **0.0** (bit-identical PNGs), both locally and in CI
+(`tests/test_pipeline.py::test_reproduce_matches_original`, which also requires byte-identical
+`.usda` and identical annotations). The threshold leaves room for denoiser or thread-count
+differences across machines; cross-device and cross-version differences are not measured.
 
 ## USD stage layout
 
