@@ -1,0 +1,55 @@
+# USD asset gate: OpenUSD's validators plus this repo's house rules
+# (.usd-asset-gate.yml) on the committed golden scenes and on scenes generated
+# from every bundled config.
+name: USD asset gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # usd-asset-gate has no release tag yet: a full commit SHA on its main branch
+  # ("Bring two ARCHITECTURE.md passages up to date with the shipped MVP", 2026-10-18).
+  USD_ASSET_GATE_SHA: e8b28531092a044ca6dbdf5b384e89f6ef03b516
+
+jobs:
+  committed-assets:
+    name: committed stages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write # the single PR comment, edited in place
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # reach the pull request's base commit
+      # Pull requests check the USD files they changed; pushes to main check them all.
+      - uses: Preponderous-Software/usd-asset-gate@e8b28531092a044ca6dbdf5b384e89f6ef03b516
+        with:
+          config: .usd-asset-gate.yml
+          usd-core-version: "26.8"
+
+  generated-assets:
+    name: generated stages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install usd-synth-data and usd-asset-gate (pinned)
+        run: python -m pip install . "usd-asset-gate @ git+https://github.com/Preponderous-Software/usd-asset-gate@${USD_ASSET_GATE_SHA}"
+      - name: Generate scenes from every bundled config
+        run: |
+          for config in configs/*.yaml; do
+            usd-synth scenes --config "$config" --seed 42 --count 3 \
+              --out "$RUNNER_TEMP/usd-out/$(basename "$config" .yaml)"
+          done
+      - name: usd-asset-gate
+        run: usd-asset-gate check --format github --summary "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/usd-out"

@@ -1,0 +1,13 @@
+# usd-asset-gate configuration (https://github.com/Preponderous-Software/usd-asset-gate).
+# Applies to the committed golden scenes and to the scenes CI generates;
+# see .github/workflows/usd-asset-gate.yml.
+version: 1
+fail_on: warning
+
+rules:
+  # Scenes are authored in metres, Z up, with /World as the default prim.
+  stage-metadata:
+    metersPerUnit: 1
+    upAxis: "Z"
+  file-size:
+    max_bytes: { default: 10MB }
