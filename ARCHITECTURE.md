@@ -1,7 +1,7 @@
 # Architecture
 
-Status: planning. Nothing here is implemented yet; this document records the intended design
-and the reasons for it. Items marked **verify in M*n*** are assumptions that the named
+Status: in progress. Milestones are implemented in order (see [MVP.md](MVP.md)); sections
+describe the design of record, and each milestone updates them as it lands. Items marked **verify in M*n*** are assumptions that the named
 milestone must confirm with a test before relying on them.
 
 ## Components
@@ -16,7 +16,7 @@ milestone must confirm with a test before relying on them.
 | `pipeline` | host Python | Orchestrate generate → render → label for a shard; write per-scene outputs atomically; timing. |
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
 | `storage` | host Python | Output sink behind one small interface (put file, mark scene done, list done scenes, read shard outputs). Local-filesystem sink for M1–M6; S3-compatible object-storage sink added in M7. |
-| `cli` | host Python | `usd-synth scenes | render | generate | reproduce | merge | k8s-manifest`. `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
+| `cli` | host Python | `usd-synth config | scenes | render | generate | reproduce | merge | k8s-manifest` (`config` validates a config and prints its hash). `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
 | `deploy/k8s` | Kubernetes | Indexed Job template and merge Job template. |
 
 Two Python environments exist on purpose: the host environment (scene generation, labelling,
@@ -54,9 +54,13 @@ is the only completion signal the design relies on.
   stream. Because the stream depends only on the scene index, not on the order of generation,
   scene *i* is identical whether generated alone, in a full run, or in any shard (MVP
   acceptance criterion 3).
-- Each stage gets a child stream with a fixed stage key (`objects`, `poses`, `materials`,
-  `lighting`, `camera`, `render`), so adding a new randomized parameter in one stage does not
-  shift the random numbers consumed by another.
+- Each stage gets a child stream with a fixed stage key (`support`, `objects`, `poses`,
+  `distractors`, `materials`, `lighting`, `camera`, `render`), so adding a new randomized
+  parameter in one stage does not shift the random numbers consumed by another. The child is
+  `SeedSequence(entropy=dataset_seed, spawn_key=(scene_index, crc32(stage_name)))`, so adding a
+  stage never renumbers existing ones. Golden-value tests in `tests/test_seeds.py` pin the
+  first draws of several streams; a stream-independence test proves extra draws in one stage
+  leave the others unchanged.
 - The Cycles sampling seed (`scene.cycles.seed`) is derived from the `render` stream.
 - Floating-point values written to `.usda` are formatted with a fixed precision so the text is
   byte-stable across platforms.
@@ -115,7 +119,10 @@ Design choices driven by Blender's USD importer, per the
 ## Randomization config schema
 
 YAML, validated by a Pydantic model; unknown keys are an error. Every numeric range is
-`[min, max]`, sampled uniformly unless a `dist:` is given. Sketch of the tabletop scenario:
+`[min, max]` and sampled uniformly (other distributions are post-MVP). Every validation error
+names the offending field as a dotted path (e.g. `objects.count: min (12) must be <= max (3)`).
+The tabletop schema, as implemented in `src/usd_synth/config.py` (the bundled
+`configs/tabletop.yaml` is the full example):
 
 ```yaml
 version: 1
@@ -126,6 +133,8 @@ render:
   device: cpu            # cpu | gpu (gpu picks CUDA/OptiX/HIP/oneAPI/Metal if available)
   samples: 64
   denoise: true
+  threads: 0            # 0 = let Blender decide
+  batch_size: 8          # scenes rendered per Blender process
 objects:
   library:
     - { name: box,      source: primitive:box,      category: box,      size_m: [0.04, 0.12] }
@@ -137,7 +146,7 @@ objects:
     min_separation_m: 0.005
     yaw_deg: [0, 360]
     allow_tipped: 0.2    # probability an object is placed on a random stable face
-distractors: { count: [0, 8], label: ignore }
+distractors: { count: [0, 8], label: ignore, size_m: [0.02, 0.06] }  # label: ignore | omit
 support:
   kind: [table, bin]     # categorical choice
   size_m: { x: [0.6, 1.2], y: [0.4, 0.8] }
@@ -157,11 +166,12 @@ camera:
   elevation_deg: [25, 80]
   azimuth_deg: [0, 360]
   focal_length_mm: [24, 50]
+  sensor_width_mm: 36    # horizontal sensor fit
   jitter_target_m: 0.05
 labels:
   min_visible_pixels: 50
   min_visible_fraction: 0.1   # of the unoccluded projected area; below → dropped
-  depth: { format: png16_mm, max_m: 10.0 }
+  depth: { format: png16_mm, max_m: 10.0, keep_exr: false }
 ```
 
 The resolved config (defaults filled in) and its SHA-256 hash are stored in `manifest.json`.
@@ -295,21 +305,21 @@ Expected levers, to be measured rather than assumed:
 
 ## Dependencies
 
-Versions are the latest available at planning time (October 2026) and become pins in
-`pyproject.toml` / the Dockerfile in M1/M3.
+Versions are the latest available at planning time (October 2026) and are pinned exactly in
+`pyproject.toml` (from M1) and the Dockerfile (from M3) as each milestone starts using them.
 
 | Dependency | Version | Used by | Notes |
 |---|---|---|---|
-| Python (host) | ≥ 3.11 | everything outside Blender | |
+| Python (host) | ≥ 3.12 | everything outside Blender | numpy 2.5 requires 3.12. CI runs 3.12. |
 | [usd-core](https://pypi.org/project/usd-core/) | 26.8 | `scenegen`, tests | Pixar's OpenUSD Python wheels (`pxr`). |
 | [Blender](https://www.blender.org/download/lts/) | 5.2 LTS (5.2.2) | `render_worker` | LTS line for a 2-year fix window; run headless via `blender -b`. |
-| [numpy](https://pypi.org/project/numpy/) | 2.x | seeds, labels | `SeedSequence` for seed derivation. |
-| [pydantic](https://pypi.org/project/pydantic/) | 2.14 | `config` | |
-| [PyYAML](https://pypi.org/project/PyYAML/) | 6.0 | `config` | |
+| [numpy](https://pypi.org/project/numpy/) | 2.5.4 | seeds, labels | `SeedSequence` for seed derivation. |
+| [pydantic](https://pypi.org/project/pydantic/) | 2.14.1 | `config` | |
+| [PyYAML](https://pypi.org/project/PyYAML/) | 6.0.3 | `config` | |
 | [pycocotools](https://pypi.org/project/pycocotools/) | 2.0.11 | labels, tests | RLE encoding and COCO validation. |
 | [OpenEXR](https://pypi.org/project/OpenEXR/) | 3.5 | labels | Reads the multilayer EXR passes. |
 | [Pillow](https://pypi.org/project/pillow/) | 13.0 | labels | PNG writing (RGB, 16-bit depth). |
-| pytest, ruff | 9.1, 0.17 | dev | |
+| pytest, ruff | 9.1.1, 0.17.1 | dev | CI runs `ruff check`, `ruff format --check` and `pytest`. |
 | [kind](https://github.com/kubernetes-sigs/kind) | 0.33 | M7 integration test | Any conformant cluster ≥ v1.33 works for real runs. |
 | S3 client library | chosen and pinned in M7 | `storage` (S3 sink) | Host-side only; must accept a custom endpoint URL so any S3-compatible store works. |
 | [MinIO](https://github.com/minio/minio) | pinned in M7 | M7 integration test | S3-compatible object store run inside the `kind` cluster. |
