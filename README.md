@@ -7,8 +7,9 @@ emits RGB images with exact ground truth — **2D bounding boxes, instance masks
 a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any cluster, and
 **throughput (images/hour)** is measured and reported on every run.
 
-> **Status: planning — not yet implemented.** This repository currently holds the design
-> documents and the MVP issue plan. Commands below describe the intended interface.
+> **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
+> package, config schema and seed derivation (M1). Commands below that are not implemented
+> yet print a "not implemented yet" message.
 
 ---
 
@@ -32,7 +33,7 @@ With usd-synth-data:
 
 1. **Describe the scene space** in `configs/tabletop.yaml`: which objects, how many, how
    cluttered, what lighting and camera ranges.
-2. **Generate a pilot set locally**: `usd-synth generate --seed 42 --count 200`.
+2. **Generate a pilot set locally**: `usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/ds`.
 3. **Inspect one odd image** by opening its `scene_000137.usda`, or regenerate it exactly with
    `usd-synth reproduce --image-id 137`.
 4. **Scale out** by rendering the same config as a sharded Kubernetes Indexed Job, then merge
@@ -73,7 +74,7 @@ See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 
 ## 🛠 Tech Stack (planned)
 
-- Python 3.11+
+- Python 3.12+
 - OpenUSD (`usd-core`)
 - Blender 5.2 LTS (Cycles), run headless
 - NumPy, Pydantic, PyYAML, OpenEXR, Pillow
@@ -98,17 +99,24 @@ MVP work is tracked in the issues labelled
 
 ---
 
-## 🚀 Getting Started (intended)
+## 🚀 Getting Started
+
+Works today (M1):
 
 ```bash
-pip install -e .
+pip install -e '.[dev]'
+usd-synth config --config configs/tabletop.yaml   # validate a config, print its SHA-256
+pytest                                            # run the test suite
+```
+
+Intended interface (later milestones):
+
+```bash
 usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/ds
 usd-synth reproduce --dataset out/ds --image-id 137 --out /tmp/repro
 usd-synth k8s-manifest --config configs/tabletop.yaml --seed 42 --count 10000 --shards 50 \
   --out s3://datasets/tabletop-42 | kubectl apply -f -
 ```
-
-None of these commands exist yet.
 
 ---
 
