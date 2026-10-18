@@ -16,7 +16,7 @@ each verification point the plan left open is recorded below with the test that 
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
 | `storage` | host Python | Output sink behind one small interface (put file, mark scene done, list done scenes, read shard outputs). Local-filesystem sink for M1–M6; S3-compatible object-storage sink added in M7. |
 | `cli` | host Python | `usd-synth config | scenes | render | generate | reproduce | merge | k8s-manifest` (`config` validates a config and prints its hash; `generate` takes `--workers`, `--shard-index/--shard-count`, `--batch-size`, `--threads`). `--out` takes a filesystem path, or (from M7) an `s3://bucket/prefix` URI. |
-| `deploy/k8s` | Kubernetes | Indexed Job template and merge Job template. |
+| `k8s` | host Python | `usd-synth k8s-manifest`: render the ConfigMap, Indexed Job and merge Job as plain YAML for `kubectl apply` (see Kubernetes job topology). `deploy/` holds only test infrastructure: the in-cluster MinIO manifest for `kind` and the MinIO image build. |
 
 Two Python environments exist on purpose: the host environment (scene generation, labelling,
 orchestration) and Blender's bundled interpreter (rendering only). The boundary between them is
@@ -329,7 +329,8 @@ flowchart TB
 
 - **One Indexed Job** (`completionMode: Indexed`); Kubernetes sets `JOB_COMPLETION_INDEX` in
   each pod, and `usd-synth generate --shard-count N` uses it as the shard index when
-  `--shard-index` is not given. Shard *k* owns scene indices `[k·size, (k+1)·size)`.
+  `--shard-index` is not given. Shard *k* owns scene indices `[k·size, min((k+1)·size, count))`
+  (see Data flow).
 - **The config** travels in a ConfigMap (`/config/config.yaml`, the resolved config, so its
   hash is unchanged); the pods run the worker image (`Dockerfile`), whose entrypoint is the CLI.
 - **Stopping**: the CLI turns `SIGTERM` into a normal exit (as PID 1 in a container it would

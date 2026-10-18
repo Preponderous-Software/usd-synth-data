@@ -41,8 +41,8 @@ With usd-synth-data:
 1. **Describe the scene space** in `configs/tabletop.yaml`: which objects, how many, how
    cluttered, what lighting and camera ranges.
 2. **Generate a pilot set locally**: `usd-synth generate --config configs/tabletop.yaml --seed 42 --count 200 --out out/ds`.
-3. **Inspect one odd image** by opening its `scene_000137.usda`, or regenerate it exactly with
-   `usd-synth reproduce --image-id 137`.
+3. **Inspect one odd image** by opening its `scenes/scene_000137.usda`, or regenerate it exactly
+   with `usd-synth reproduce --dataset out/ds --image-id 137 --out out/repro`.
 4. **Scale out** by rendering the same config as a sharded Kubernetes Indexed Job, then merge
    the shards into one COCO dataset — identical in content to a local run.
 5. **Compare throughput** across sample counts or resolutions from `throughput.json`.
