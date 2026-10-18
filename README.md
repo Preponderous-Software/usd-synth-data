@@ -66,8 +66,8 @@ Core responsibilities:
 See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 
 - **Scenario:** tabletop / bin-picking (an outdoor terrain scenario and physics-settled
-  placement are planned after the MVP; [`examples/minecraft/`](examples/minecraft/) already
-  renders outdoor Minecraft terrain through the same worker, see below).
+  placement are planned after the MVP; the [world examples](examples/) already render
+  Minecraft terrain, Roam worlds and Barony boards through the same worker, see below).
 - **Randomization:** object selection and count, poses, distractor clutter, support surface,
   materials, key/dome lighting, camera distance/elevation/azimuth/focal length.
 - **Labels:** RGB PNG, 16-bit depth PNG (millimetres), instance masks (RLE), tight boxes,
@@ -79,6 +79,20 @@ See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 - **Throughput:** `throughput.json` with images/hour and per-stage timings.
 
 ---
+
+## 🌐 World Domains
+
+Besides the bundled tabletop scenario, the [`examples/`](examples/) directory turns worlds from
+other programs into labelled datasets. Each example builds a stage in the usd-synth layout and
+reuses the stock Blender worker, pass reader and COCO writer. Throughput is from one measured
+run each: 640×480, 64 samples, denoised, Cycles on 4 CPU threads of a shared desktop CPU.
+
+| Domain | World comes from | Labelled classes | Images/hour |
+|---|---|---|---|
+| [Minecraft](examples/minecraft/) | a Minecraft-USD-Exporter terrain export | tree, water, ore, sand, stone | 170 |
+| [Roam](examples/roam/) | roam-usd stages of worlds made by Roam's own generator | tree, stone, ore, creature, structure, food | 155 |
+| [Barony](examples/barony/) | game-state JSON from Barony's backend, built into a 3D board here | castle, village, army | 249 |
+| Beyond Nations | not yet: it has no saves or export, so an exporter has to be written first ([what's needed](examples/README.md#beyond-nations-not-added-yet)) | — | — |
 
 ## 🧱 Example: Training Data from a Minecraft World
 
@@ -95,6 +109,35 @@ outside the package.
 *Six of 24 views over a 160 × 160-block area of a fresh vanilla 26.3 world (seed 8675309),
 rendered at 640×480 with 64 samples on 4 CPU threads; see
 [`examples/minecraft/README.md`](examples/minecraft/README.md) to reproduce it.*
+
+## 🌲 Example: Training Data from Roam Worlds
+
+[`examples/roam/`](examples/roam/) renders random views of worlds from the game
+[Roam](https://github.com/Preponderous-Software/roam), read from stages written by
+[roam-usd](https://github.com/Preponderous-Software/roam-usd). It labels **tree**, **stone**,
+**ore**, **creature**, **structure** and **food**. A tree is one trunk with its canopy, stone
+and ore are connected outcrops and veins, the home is one structure, and each creature or food
+item is its own instance. Only roam-usd's catalog colours are rendered, so the images contain
+no Roam artwork.
+
+![Contact sheet: six random views over generated Roam worlds, with boxes, semantic masks and depth](docs/images/roam-contact-sheet.png)
+
+*Six of 24 views over six worlds from `roam-usd generate --seeds 1..6 --radius 3` (7×7 rooms
+each), rendered at 640×480 with 64 samples on 4 CPU threads; see
+[`examples/roam/README.md`](examples/roam/README.md) to reproduce it.*
+
+## 🏰 Example: Training Data from Barony Boards
+
+[`examples/barony/`](examples/barony/) saves game states from a running
+[Barony](https://github.com/Preponderous-Software/barony) backend over its HTTP API. It builds
+a 3D board from each state and labels every **castle**, **village** and **army**. Barony draws
+in 2D, so the board, buildings and soldier figures are this example's own geometry, built from
+the state: owners by colour, army size by figure count, plus unlabelled scenery on empty tiles.
+
+![Contact sheet: six random views over boards built from Barony game states, with boxes, semantic masks and depth](docs/images/barony-contact-sheet.png)
+
+*Six of 24 views over 12 states from three guest games, rendered at 640×480 with 64 samples on
+4 CPU threads; see [`examples/barony/README.md`](examples/barony/README.md) to reproduce it.*
 
 ---
 

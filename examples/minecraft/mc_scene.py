@@ -23,17 +23,22 @@ from __future__ import annotations
 
 import fnmatch
 import math
+import sys
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import yaml
-from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdLux, UsdShade, Vt
+from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdShade, Vt
 from pydantic import BaseModel, ConfigDict, Field
 
 from usd_synth.camera import PinholeCamera
 from usd_synth.seeds import stage_rng
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+
+import worldviews  # noqa: E402
 
 NS = "userProperties:usd_synth:"
 
@@ -458,10 +463,6 @@ class View:
     distance: float
 
 
-def _lerp(a, b, t):
-    return tuple(round(float(x + (y - x) * t), 6) for x, y in zip(a, b, strict=True))
-
-
 def _column_top(hm, origin_xz, x, z, radius=0):
     i, j = int(math.floor(x)) - origin_xz[0], int(math.floor(z)) - origin_xz[1]
     if not (0 <= i < hm.shape[0] and 0 <= j < hm.shape[1]):
@@ -560,26 +561,20 @@ def sample_view(info: SceneInfo, settings: Settings, seed: int, index: int, atte
     else:
         raise RuntimeError(f"view {index}: no camera pose found in {attempts} tries")
 
-    light_rng = stage_rng(seed, index, "lighting")
-    el = float(light_rng.uniform(*vs.sun_elevation_deg))
-    az = math.radians(float(light_rng.uniform(*vs.sun_azimuth_deg)))
-    day = min(max((el - 8.0) / 40.0, 0.0), 1.0)  # 0 = sunrise/sunset, 1 = full day
-    sun_dir = (
-        math.cos(math.radians(el)) * math.cos(az),
-        math.cos(math.radians(el)) * math.sin(az),
-        math.sin(math.radians(el)),
+    light = worldviews.sample_lighting(
+        seed, index, vs.sun_elevation_deg, vs.sun_azimuth_deg, vs.sun_intensity, vs.sky_intensity
     )
     return View(
         index=index,
         camera=camera,
         target_class=cls,
         target_block=tuple(int(v) for v in tb),
-        sun_dir=tuple(round(v, 6) for v in sun_dir),
-        sun_elevation_deg=round(el, 3),
-        sun_intensity=round(float(light_rng.uniform(*vs.sun_intensity)), 4),
-        sun_color=_lerp((1.0, 0.62, 0.38), (1.0, 0.96, 0.9), day),
-        sky_color=_lerp((0.85, 0.6, 0.48), (0.45, 0.66, 1.0), day),
-        sky_intensity=round(float(light_rng.uniform(*vs.sky_intensity)) * (0.6 + 0.4 * day), 4),
+        sun_dir=light.sun_dir,
+        sun_elevation_deg=light.sun_elevation_deg,
+        sun_intensity=light.sun_intensity,
+        sun_color=light.sun_color,
+        sky_color=light.sky_color,
+        sky_intensity=light.sky_intensity,
         yaw_deg=round(yaw, 3),
         pitch_deg=round(pitch, 3),
         distance=round(dist, 3),
@@ -588,41 +583,8 @@ def sample_view(info: SceneInfo, settings: Settings, seed: int, index: int, atte
 
 def write_view(view: View, scene_path: Path, out_path: Path, seed: int, settings: Settings):
     """A small ``.usda`` that sublayers the scene and adds this view's camera, sun and sky."""
-    stage = Usd.Stage.CreateNew(str(out_path))
-    rel = Path(scene_path).resolve().relative_to(Path(out_path).resolve().parent.parent)
-    stage.GetRootLayer().subLayerPaths.append(f"../{rel.as_posix()}")
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-    world = UsdGeom.Xform.Define(stage, "/World").GetPrim()
-    stage.SetDefaultPrim(world)
-    _set(world, "scene_index", Sdf.ValueTypeNames.Int, view.index)
-    _set(world, "dataset_seed", Sdf.ValueTypeNames.Int64, seed)
-    _set(world, "image_width", Sdf.ValueTypeNames.Int, settings.width)
-    _set(world, "image_height", Sdf.ValueTypeNames.Int, settings.height)
-
-    UsdGeom.Xform.Define(stage, "/World/Lights")
-    sun = UsdLux.DistantLight.Define(stage, "/World/Lights/Sun")
-    sun.CreateIntensityAttr(view.sun_intensity)
-    sun.CreateColorAttr(Gf.Vec3f(*view.sun_color))
-    sun.CreateAngleAttr(1.0)
-    # A DistantLight shines along its local -Z: aim -Z away from the sun.
-    to_sun = np.asarray(view.sun_dir)
-    rot = PinholeCamera.look_at(-to_sun, np.zeros(3), 50, 36, 2, 2).rotation
-    m = np.eye(4)
-    m[:3, :3] = rot.T
-    sun.AddTransformOp().Set(Gf.Matrix4d(m.tolist()))
-    dome = UsdLux.DomeLight.Define(stage, "/World/Lights/Dome")
-    dome.CreateIntensityAttr(view.sky_intensity)
-    dome.CreateColorAttr(Gf.Vec3f(*view.sky_color))
-
-    cam = view.camera
-    camera = UsdGeom.Camera.Define(stage, "/World/Camera")
-    camera.AddTransformOp().Set(Gf.Matrix4d(cam.usd_matrix()))
-    camera.CreateProjectionAttr(UsdGeom.Tokens.perspective)
-    camera.CreateFocalLengthAttr(round(cam.focal_length_mm, 6))
-    camera.CreateHorizontalApertureAttr(round(cam.sensor_width_mm, 6))
-    camera.CreateVerticalApertureAttr(round(cam.vertical_aperture_mm, 6))
-    camera.CreateClippingRangeAttr(Gf.Vec2f(0.05, 1000.0))
-    _set(camera.GetPrim(), "focal_length_mm", Sdf.ValueTypeNames.Double, cam.focal_length_mm)
-    _set(camera.GetPrim(), "sensor_width_mm", Sdf.ValueTypeNames.Double, cam.sensor_width_mm)
-    stage.GetRootLayer().Save()
+    light = worldviews.Lighting(
+        view.sun_dir, view.sun_elevation_deg, view.sun_intensity, view.sun_color,
+        view.sky_color, view.sky_intensity,
+    )  # fmt: skip
+    worldviews.write_view(view.camera, light, scene_path, out_path, seed, view.index)

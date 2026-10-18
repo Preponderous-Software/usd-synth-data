@@ -43,7 +43,9 @@ All labels come from the render; none are drawn by hand or re-projected:
    meshes. Only block faces next to an empty cell are emitted. Each block type gets a
    `UsdPreviewSurface` in the exporter's display colour, bound through a `GeomSubset`.
 3. For each view, a small `views/view_NNNN.usda` sublayers `scene.usdc` and adds the camera,
-   a `DistantLight` sun and a dome sky colour. The unchanged `usd_synth.render.scene_spec` and
+   a `DistantLight` sun and a dome sky colour (written by the shared
+   [`../common/worldviews.py`](../common/worldviews.py), which the Roam and Barony examples
+   use too). The unchanged `usd_synth.render.scene_spec` and
    `render_batch` render it. The worker gives every instance its own Cycles Object Index.
 4. `mc_synth.py` reads the Object Index pass from `aux.exr` (`usd_synth.passes`). Each visible
    instance becomes a COCO annotation: its mask is the instance's pixels, and its box is the

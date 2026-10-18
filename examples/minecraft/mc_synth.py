@@ -29,63 +29,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from types import SimpleNamespace
-
-import numpy as np
-from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import mc_scene  # noqa: E402
+import mc_scene  # noqa: E402  (also puts examples/common on sys.path)
+import worldviews  # noqa: E402
+from worldviews import DEPTH_SCALE_M, label_view, palette_png  # noqa: E402, F401
 
-from usd_synth.coco import build_coco, dump_json, validate_coco  # noqa: E402
-from usd_synth.config import ImageConfig, RenderConfig  # noqa: E402
-from usd_synth.labels import encode_rle, read_instances, tight_bbox  # noqa: E402
-from usd_synth.passes import read_passes  # noqa: E402
-from usd_synth.pipeline import cpu_model  # noqa: E402
-from usd_synth.render import find_blender, render_batch, scene_spec  # noqa: E402
-
-DEPTH_SCALE_M = 0.01  # depth PNG unit: centimetres (outdoor ranges exceed 16-bit millimetres)
-
-
-def label_view(index: np.ndarray, instances, categories: list[str], min_pixels: int):
-    """COCO annotations (no IDs yet) and the semantic class map for one rendered view."""
-    cat_of = {i.instance_id: categories.index(i.category_name) + 1 for i in instances}
-    lut = np.zeros(max(cat_of, default=0) + 1, dtype=np.uint8)
-    for iid, cat in cat_of.items():
-        lut[iid] = cat
-    semantic = lut[np.clip(index, 0, len(lut) - 1)]
-    semantic[(index < 0) | (index >= len(lut))] = 0
-    ids, counts = np.unique(index[index > 0], return_counts=True)
-    anns = []
-    for iid, n in zip(ids.tolist(), counts.tolist(), strict=True):
-        if iid not in cat_of or n < min_pixels:
-            continue
-        mask = index == iid
-        anns.append(
-            {
-                "category_id": cat_of[iid],
-                "segmentation": encode_rle(mask),
-                "area": float(n),
-                "bbox": tight_bbox(mask),
-                "iscrowd": 0,
-                "instance_id": int(iid),
-            }
-        )
-    return anns, semantic
-
-
-def palette_png(classes: np.ndarray, path: Path, colours: list[tuple[int, int, int]]) -> None:
-    im = Image.fromarray(classes.astype(np.uint8), mode="P")
-    flat = [0, 0, 0] + [c for rgb in colours for c in rgb]
-    im.putpalette(flat + [0] * (768 - len(flat)))
-    im.save(path, optimize=True)
-
+from usd_synth.render import find_blender  # noqa: E402
 
 CLASS_COLOURS = [(46, 160, 67), (64, 140, 255), (255, 99, 71), (255, 214, 10), (170, 170, 190)]
 
@@ -108,8 +63,7 @@ def main(argv: list[str] | None = None) -> None:
         settings = settings.model_copy(update={"samples": args.samples})
     blender = find_blender(args.blender)
     out = args.out
-    for sub in ("views", "images", "semantic", "depth", "render"):
-        (out / sub).mkdir(parents=True, exist_ok=True)
+    (out / "views").mkdir(parents=True, exist_ok=True)
 
     t0 = time.perf_counter()
     terrain = mc_scene.read_export(args.export)
@@ -127,66 +81,18 @@ def main(argv: list[str] | None = None) -> None:
                             args.seed, settings)  # fmt: skip
         views.append(view)
 
-    shim = SimpleNamespace(  # the two Config sections render_batch reads
-        render=RenderConfig(samples=settings.samples, denoise=settings.denoise),
-        image=ImageConfig(width=settings.width, height=settings.height),
-    )
     categories = info.categories
-    records, per_view, render_s = [], [], []
-    t_start = time.perf_counter()
-    blender_info = {}
-    for b in range(0, args.views, args.batch_size):
-        batch = range(b, min(b + args.batch_size, args.views))
-        specs = [scene_spec(out / "views" / f"view_{i:04d}.usda", out / "render" / f"{i:04d}")
-                 for i in batch]  # fmt: skip
-        result = render_batch(shim, specs, blender, threads=args.threads or None, timeout=7200)
-        for rj in result.scenes:
-            blender_info = {k: rj[k] for k in ("blender", "device", "threads")}
-        for i, rj in zip(batch, result.scenes, strict=True):
-            render_s.append(rj["timings"]["render"])
-            rdir = out / "render" / f"{i:04d}"
-            usd = out / "views" / f"view_{i:04d}.usda"
-            passes = read_passes(rdir / "aux.exr")
-            anns, semantic = label_view(
-                passes.index, read_instances(usd), categories, settings.min_visible_pixels
-            )
-            shutil.copyfile(rdir / "rgb.png", out / "images" / f"{i:04d}.png")
-            palette_png(semantic, out / "semantic" / f"{i:04d}.png", CLASS_COLOURS)
-            depth = np.asarray(passes.depth, dtype=np.float64)
-            ok = np.isfinite(depth) & (depth > 0) & (depth < 655.0)
-            cm = np.where(ok, np.rint(depth / DEPTH_SCALE_M), 0).astype(np.uint16)
-            Image.fromarray(cm).save(out / "depth" / f"{i:04d}.png")
-            records.append(
-                {
-                    "scene_index": i,
-                    "file_name": f"images/{i:04d}.png",
-                    "depth_file": f"depth/{i:04d}.png",
-                    "scene_file": f"views/view_{i:04d}.usda",
-                    "width": settings.width,
-                    "height": settings.height,
-                    "annotations": anns,
-                }
-            )
-            counts = {c: 0 for c in categories}
-            for a in anns:
-                counts[categories[a["category_id"] - 1]] += 1
-            pixels = {c: int((semantic == k).sum()) for k, c in enumerate(categories, start=1)}
-            per_view.append({"view": i, "instances": counts, "pixels": pixels})
-            print(f"view {i:04d}: {rj['timings']['render']:.1f} s render, {len(anns)} instances")
-    wall = time.perf_counter() - t_start
-
-    coco_categories = [
-        {"id": k, "name": c, "supercategory": "minecraft"}
-        for k, c in enumerate(categories, start=1)
-    ]
-    coco = build_coco(records, None, "usd-synth-data minecraft example", coco_categories)
-    coco["info"]["depth_scale_m"] = DEPTH_SCALE_M
-    dump_json(coco, out / "annotations.json")
-    errors = validate_coco(out / "annotations.json")
-    if errors:
-        raise SystemExit("invalid COCO:\n" + "\n".join(errors[:20]))
-
-    totals = {c: sum(v["instances"][c] for v in per_view) for c in categories}
+    run = worldviews.render_views(
+        out, args.views, categories, CLASS_COLOURS, width=settings.width, height=settings.height,
+        samples=settings.samples, denoise=settings.denoise,
+        min_visible_pixels=settings.min_visible_pixels, blender=blender,
+        threads=args.threads or None, batch_size=args.batch_size,
+    )  # fmt: skip
+    shared = worldviews.write_dataset(
+        out, run, categories, "usd-synth-data minecraft example", "minecraft",
+        width=settings.width, height=settings.height, samples=settings.samples,
+        denoise=settings.denoise,
+    )  # fmt: skip
     meta = {
         "export": str(args.export),
         "export_bbox": terrain.bbox,
@@ -212,24 +118,7 @@ def main(argv: list[str] | None = None) -> None:
             "blocks_by_class": info.blocks_by_category,
             "build_seconds": round(t_scene, 2),
         },
-        "annotations": {"total": len(coco["annotations"]), "per_class": totals},
-        "render": {
-            "engine": "cycles",
-            **blender_info,
-            "samples": settings.samples,
-            "denoise": settings.denoise,
-            "resolution": [settings.width, settings.height],
-            "render_s_mean": round(float(np.mean(render_s)), 2),
-            "render_s_p95": round(float(np.percentile(render_s, 95)), 2),
-            "cpu": cpu_model(),
-        },
-        "throughput": {
-            "images": args.views,
-            "wall_seconds": round(wall, 1),
-            "images_per_hour": round(args.views / wall * 3600, 1),
-            "note": "render + label wall time (Blender start-up, USD import, render, labels); "
-            "scene build excluded",
-        },
+        **shared,
         "view_params": [
             {
                 **{k: v for k, v in asdict(view).items() if k != "camera"},
@@ -238,12 +127,13 @@ def main(argv: list[str] | None = None) -> None:
             }
             for view in views
         ],
-        "per_view": per_view,
+        "per_view": run.per_view,
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     print(
-        f"{args.views} views in {wall:.0f} s = {meta['throughput']['images_per_hour']:.0f} "
-        f"images/hour; annotations per class: {totals}"
+        f"{args.views} views in {run.wall_s:.0f} s = "
+        f"{meta['throughput']['images_per_hour']:.0f} images/hour; annotations per class: "
+        f"{shared['annotations']['per_class']}"
     )
 
 
