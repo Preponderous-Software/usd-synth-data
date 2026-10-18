@@ -9,7 +9,8 @@ a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any clust
 
 > **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
 > package, config schema and seed derivation (M1); the tabletop scene generator writing
-> flattened USD (M2); the headless Blender Cycles render worker and its container image (M3). Commands below that are not implemented
+> flattened USD (M2); the headless Blender Cycles render worker and its container image (M3);
+> ground-truth labels, depth PNGs, the COCO writer/validator and the manifest (M4). Commands below that are not implemented
 > yet print a "not implemented yet" message.
 
 ---

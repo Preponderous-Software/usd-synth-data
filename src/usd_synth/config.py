@@ -205,6 +205,15 @@ class Config(_Model):
     camera: CameraConfig = CameraConfig()
     labels: LabelsConfig = LabelsConfig()
 
+    @model_validator(mode="after")
+    def _reserved_category(self) -> Config:
+        if self.distractors.label == "ignore" and "distractor" in self.categories():
+            raise ValueError(
+                "objects.library: category 'distractor' is reserved for distractors when "
+                "distractors.label is 'ignore'; rename the category"
+            )
+        return self
+
     def categories(self) -> list[str]:
         """Labelled category names in config order (first appearance); COCO id = index + 1."""
         seen: list[str] = []
