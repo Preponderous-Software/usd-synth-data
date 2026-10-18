@@ -34,11 +34,19 @@ def stage_key(stage: str) -> int:
     return zlib.crc32(stage.encode("ascii"))
 
 
+MAX_SEED = 2**63 - 1  # stored as a signed 64-bit attribute in the stage and manifest
+
+
 def _check(dataset_seed: int, scene_index: int) -> None:
-    if dataset_seed < 0:
-        raise ValueError(f"dataset seed must be >= 0 (got {dataset_seed})")
+    if not 0 <= dataset_seed <= MAX_SEED:
+        raise ValueError(f"dataset seed must be in [0, 2**63 - 1] (got {dataset_seed})")
     if scene_index < 0:
         raise ValueError(f"scene index must be >= 0 (got {scene_index})")
+
+
+def check_seed(dataset_seed: int) -> None:
+    """Raise ValueError unless ``dataset_seed`` is in ``[0, MAX_SEED]``."""
+    _check(dataset_seed, 0)
 
 
 def scene_sequence(dataset_seed: int, scene_index: int) -> np.random.SeedSequence:
