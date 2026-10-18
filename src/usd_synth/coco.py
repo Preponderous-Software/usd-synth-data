@@ -9,6 +9,7 @@ the same scenes into shards therefore assembles to the same ``annotations.json``
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -118,7 +119,16 @@ def validate_coco(path: Path | str) -> list[str]:
         if len(xs) == 0:
             errors.append(f"annotation {aid}: empty mask")
             continue
+        numbers = [*ann["bbox"], ann["area"]]
+        if len(ann["bbox"]) != 4 or not all(
+            isinstance(v, int | float) and math.isfinite(v) for v in numbers
+        ):
+            errors.append(f"annotation {aid}: non-finite or malformed bbox/area {numbers}")
+            continue
         x, y, w, h = ann["bbox"]
+        if w <= 0 or h <= 0:
+            errors.append(f"annotation {aid}: bbox {ann['bbox']} has no extent")
+            continue
         if xs.min() < x or ys.min() < y or xs.max() + 1 > x + w or ys.max() + 1 > y + h:
             errors.append(f"annotation {aid}: bbox {ann['bbox']} does not enclose its mask")
         if abs(float(mask.sum()) - ann["area"]) > 0.5:

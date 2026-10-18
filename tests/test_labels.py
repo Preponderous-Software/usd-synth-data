@@ -168,6 +168,27 @@ def test_valid_coco_passes_and_corruptions_are_caught(tmp_path):
     assert any("mask" in e and "image size" in e for e in errors)
 
 
+def test_non_finite_bbox_or_area_is_caught(tmp_path):
+    data = build_coco([_record(i, _anns(i)) for i in range(2)], _cfg())
+    data["annotations"][0]["bbox"][2] = float("nan")
+    data["annotations"][1]["area"] = float("inf")
+    path = tmp_path / "annotations.json"
+    dump_json(data, path)  # Python's json writes NaN/Infinity and reads them back
+    errors = validate_coco(path)
+    assert sum("non-finite" in e for e in errors) == 2
+
+
+def test_distractor_category_name_is_reserved():
+    from usd_synth.config import ConfigError
+
+    raw = yaml.safe_load(SMALL.read_text())
+    raw["objects"]["library"][0]["category"] = "distractor"
+    with pytest.raises(ConfigError, match="objects.library: category 'distractor' is reserved"):
+        parse_config(raw)
+    raw["distractors"] = {"label": "omit"}
+    assert parse_config(raw).categories()[0] == "distractor"  # fine when distractors are omitted
+
+
 def test_manifest_records_provenance():
     cfg = _cfg()
     m = build_manifest(cfg, 42, [_record(5, [])], {"blender": "5.2.2", "device": "cpu"}, "/cfg")
