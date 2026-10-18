@@ -108,12 +108,16 @@ Each milestone maps 1:1 to a GitHub issue labelled `mvp`.
 
 ### M1. Project skeleton, config schema and seed derivation
 
+Tracked in [#1](https://github.com/Preponderous-Software/usd-synth-data/issues/1).
+
 Python package layout, CLI entry point, `pyproject.toml`, lint/test CI. Pydantic config model
 for the tabletop scenario with validation. Deterministic seed tree
 (`dataset seed → scene seed → per-stage streams`) with tests proving stability and
 independence. Covers acceptance criterion 1 and the determinism foundations of 2–3.
 
 ### M2. Tabletop scene generator writing USD
+
+Tracked in [#2](https://github.com/Preponderous-Software/usd-synth-data/issues/2).
 
 Sampling of support surface, objects, poses (with non-overlap rejection), clutter, lights,
 materials (UsdPreviewSurface) and camera (look-at with randomized distance/elevation/azimuth).
@@ -122,11 +126,15 @@ Writes a flattened `.usda` per scene with instance IDs and categories as custom 
 
 ### M3. Headless Blender render worker
 
+Tracked in [#3](https://github.com/Preponderous-Software/usd-synth-data/issues/3).
+
 A script run by Blender in background mode: import the USD stage, map instance IDs to Cycles
 object pass indices, configure Cycles (samples, denoiser, device, seed), render RGB + depth +
 object-index passes to files. Container image with a pinned Blender LTS. Covers criterion 5.
 
 ### M4. Ground-truth labels and COCO writer
+
+Tracked in [#4](https://github.com/Preponderous-Software/usd-synth-data/issues/4).
 
 Convert the index pass into per-instance masks (RLE), derive tight boxes, handle occlusion
 and truncation (visible-pixel threshold), encode depth, and write `annotations.json` plus
@@ -134,17 +142,23 @@ and truncation (visible-pixel threshold), encode depth, and write `annotations.j
 
 ### M5. End-to-end local pipeline and `reproduce`
 
+Tracked in [#5](https://github.com/Preponderous-Software/usd-synth-data/issues/5).
+
 `usd-synth generate` runs generate → render → label for N scenes in one process and writes a
 complete dataset; `usd-synth reproduce` regenerates one image from the manifest. Covers
 criterion 8 and the first half of 11.
 
 ### M6. Throughput measurement, sharding and merge
 
+Tracked in [#6](https://github.com/Preponderous-Software/usd-synth-data/issues/6).
+
 Per-stage timers, `throughput.json`, end-of-run summary; `--shard-index/--shard-count` to run a
 subset; local multi-process sharding; `usd-synth merge` to combine shard outputs into one COCO
 dataset. Covers criteria 3 (at scale) and 9.
 
 ### M7. Kubernetes Indexed Job fan-out
+
+Tracked in [#7](https://github.com/Preponderous-Software/usd-synth-data/issues/7).
 
 Indexed Job manifest template (one pod per shard, `JOB_COMPLETION_INDEX` → shard index),
 shared output volume, a merge step after completion, and a `kind`-based integration test and
