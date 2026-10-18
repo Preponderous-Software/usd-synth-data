@@ -90,3 +90,71 @@ jobs:
           print("container render OK:", rgb.size, "instance ids", sorted(set(p.index.ravel().tolist())))
           PY
           '
+
+  s3-sink:
+    name: storage tests (MinIO)
+    runs-on: ubuntu-24.04
+    env:
+      MINIO_TAG: RELEASE.2025-10-15T17-29-55Z
+      MINIO_COMMIT: 9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache MinIO build
+        id: minio-cache
+        uses: actions/cache@v4
+        with:
+          path: .minio-bin
+          key: minio-${{ env.MINIO_COMMIT }}
+      - uses: actions/setup-go@v5
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        with:
+          go-version: "1.24.8"
+          cache: false
+      - name: Build MinIO from its final release tag
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$MINIO_TAG" https://github.com/minio/minio.git /tmp/minio-src
+          test "$(git -C /tmp/minio-src rev-parse HEAD)" = "$MINIO_COMMIT"
+          (cd /tmp/minio-src && CGO_ENABLED=0 go build -trimpath -o "$GITHUB_WORKSPACE/.minio-bin/minio" .)
+      - name: Start MinIO
+        run: |
+          mkdir -p /tmp/minio-data
+          MINIO_ROOT_USER=usd-synth-test MINIO_ROOT_PASSWORD=usd-synth-test-secret \
+            nohup .minio-bin/minio server /tmp/minio-data --address 127.0.0.1:9000 > /tmp/minio.log 2>&1 &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:9000/minio/health/ready && break; sleep 1; done
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Resume/merge contract on both sinks
+        env:
+          USD_SYNTH_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+          AWS_ACCESS_KEY_ID: usd-synth-test
+          AWS_SECRET_ACCESS_KEY: usd-synth-test-secret
+          USD_SYNTH_REQUIRE_S3: "1"
+        run: pytest tests/test_storage_merge.py -v
+
+  kind:
+    name: kind e2e (Indexed Job + MinIO)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
+          sudo install /tmp/kind /usr/local/bin/kind
+          kind version
+          kubectl version --client
+      - name: Install
+        run: python -m pip install -e .
+      - name: Run scripts/kind-e2e.sh
+        run: scripts/kind-e2e.sh

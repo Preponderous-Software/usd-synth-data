@@ -2,6 +2,8 @@
 the same tests run against every sink (local filesystem here; S3-compatible from M7)."""
 
 import json
+import os
+import uuid
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,7 @@ from sink_contract import fake_scene, fake_shard
 
 from usd_synth.config import load_config
 from usd_synth.merge import MergeError, merge
+from usd_synth.s3 import S3Sink
 from usd_synth.storage import LocalSink, open_sink
 
 SMALL = Path(__file__).resolve().parent / "data" / "small.yaml"
@@ -19,11 +22,29 @@ def cfg():
     return load_config(SMALL)
 
 
-@pytest.fixture(params=["local"])
+@pytest.fixture(params=["local", "s3"])
 def make_sink(request, tmp_path):
-    """Factory of empty sinks; each call returns a fresh, isolated sink."""
+    """Factory of empty sinks; each call returns a fresh, isolated sink.
+
+    The ``s3`` variant needs an S3-compatible endpoint (``USD_SYNTH_TEST_S3_ENDPOINT`` plus
+    ``AWS_ACCESS_KEY_ID``/``AWS_SECRET_ACCESS_KEY``; CI runs MinIO) and is skipped without one,
+    unless ``USD_SYNTH_REQUIRE_S3=1``.
+    """
     counter = iter(range(1000))
-    return lambda: LocalSink(tmp_path / f"sink{next(counter)}")
+    if request.param == "local":
+        return lambda: LocalSink(tmp_path / f"sink{next(counter)}")
+    endpoint = os.environ.get("USD_SYNTH_TEST_S3_ENDPOINT")
+    if not endpoint:
+        if os.environ.get("USD_SYNTH_REQUIRE_S3") == "1":
+            pytest.fail("S3 sink tests required but USD_SYNTH_TEST_S3_ENDPOINT is unset")
+        pytest.skip("no S3-compatible endpoint (set USD_SYNTH_TEST_S3_ENDPOINT)")
+    import boto3
+
+    os.environ["AWS_ENDPOINT_URL"] = endpoint
+    client = boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1")
+    bucket = f"test-{uuid.uuid4().hex[:12]}"
+    client.create_bucket(Bucket=bucket)
+    return lambda: S3Sink(bucket, f"run{next(counter)}/data")
 
 
 def test_put_get_list_exists_copy(make_sink):
@@ -120,5 +141,14 @@ def test_merge_writes_throughput_with_cluster_and_per_shard_figures(make_sink, c
     assert [s["shard_index"] for s in manifest["shards"]] == [0, 1]
 
 
-def test_open_sink(tmp_path):
+def test_open_sink(tmp_path, monkeypatch):
     assert isinstance(open_sink(tmp_path), LocalSink)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    sink = open_sink("s3://bucket/some/prefix/")
+    assert isinstance(sink, S3Sink) and sink.bucket == "bucket" and sink.prefix == "some/prefix/"
+    assert sink.dataset_prefix == "dataset/"
+    assert (
+        sink.describe("dataset/annotations.json")
+        == "s3://bucket/some/prefix/dataset/annotations.json"
+    )
