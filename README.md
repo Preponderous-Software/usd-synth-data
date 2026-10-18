@@ -7,13 +7,10 @@ emits RGB images with exact ground truth — **2D bounding boxes, instance masks
 a **COCO-style** dataset. Rendering fans out as **Kubernetes Jobs** on any cluster, and
 **throughput (images/hour)** is measured and reported on every run.
 
-> **Status: in progress — MVP milestones are landing in order.** Implemented so far: the
-> package, config schema and seed derivation (M1); the tabletop scene generator writing
-> flattened USD (M2); the headless Blender Cycles render worker and its container image (M3);
-> ground-truth labels, depth PNGs, the COCO writer/validator and the manifest (M4); the
-> end-to-end `generate` pipeline with resume, and `reproduce` (M5); throughput reports, local
-> sharding with `--workers` / `--shard-index`, and `merge` (M6). Commands below that are not implemented
-> yet print a "not implemented yet" message.
+> **Status: MVP complete (M1–M7).** Scene generation, headless rendering, labels, COCO output,
+> reproduce, throughput reporting, local sharding and Kubernetes fan-out to S3-compatible
+> storage all work and are tested in CI (including a `kind` cluster run). See
+> [MVP.md](MVP.md) for the milestones and their pull requests.
 
 ---
 
@@ -76,12 +73,13 @@ See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 
 ---
 
-## 🛠 Tech Stack (planned)
+## 🛠 Tech Stack
 
 - Python 3.12+
 - OpenUSD (`usd-core`)
 - Blender 5.2 LTS (Cycles), run headless
 - NumPy, Pydantic, PyYAML, OpenEXR, Pillow
+- boto3 (any S3-compatible endpoint)
 - pycocotools
 - Docker (render worker image)
 - Kubernetes Indexed Jobs (any cluster ≥ v1.33; `kind` for local testing)
@@ -159,12 +157,29 @@ docker run --rm -v "$PWD/out:/app/out" usd-synth generate --config configs/table
   --seed 42 --count 4 --out out/ds
 ```
 
-Intended interface (later milestones):
+### On a Kubernetes cluster
+
+Any conformant cluster (v1.33+) and any S3-compatible object store work; no shared volume is
+needed. Push the worker image somewhere the cluster can pull from, create the bucket, and put
+the store's endpoint and credentials in a Secret (they never go in the dataset config):
 
 ```bash
+docker build -t registry.example.com/usd-synth:0.1.0 . && docker push registry.example.com/usd-synth:0.1.0
+kubectl create secret generic usd-synth-s3 \
+  --from-literal=AWS_ENDPOINT_URL=https://s3.example.com \
+  --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
 usd-synth k8s-manifest --config configs/tabletop.yaml --seed 42 --count 10000 --shards 50 \
-  --out s3://datasets/tabletop-42 | kubectl apply -f -
+  --out s3://datasets/tabletop-42 --image registry.example.com/usd-synth:0.1.0 --cpu 4 \
+  | kubectl apply -f -
 ```
+
+This creates a ConfigMap with the config, an Indexed Job (one pod per shard; a failed or
+deleted pod is retried and resumes from its finished scenes) and a merge Job that waits for
+all shards and writes the dataset, including cluster and per-pod images/hour in
+`throughput.json`, to `s3://datasets/tabletop-42/dataset/`. Omit `AWS_ENDPOINT_URL` for AWS S3
+itself. `usd-synth merge --out s3://…` also works from any machine with the same environment
+variables. To try it locally, `scripts/kind-e2e.sh` runs the whole flow on a throwaway `kind`
+cluster with MinIO inside it (needs docker, kind and kubectl).
 
 ---
 
