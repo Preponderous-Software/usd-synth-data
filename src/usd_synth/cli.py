@@ -8,6 +8,7 @@ import sys
 
 from . import __version__
 from .config import ConfigError, load_config
+from .seeds import check_seed
 
 
 def _cmd_config(args: argparse.Namespace) -> int:
@@ -24,6 +25,7 @@ def _cmd_scenes(args: argparse.Namespace) -> int:
     from .scenegen import write_scene
 
     cfg = load_config(args.config)
+    check_seed(args.seed)
     config_dir = Path(args.config).resolve().parent
     for index in range(args.start, args.start + args.count):
         path = write_scene(cfg, args.seed, index, args.out, config_dir)
@@ -79,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except ConfigError as err:
         print(err, file=sys.stderr)
+        return 1
+    except ValueError as err:  # e.g. an out-of-range seed
+        print(f"usd-synth: {err}", file=sys.stderr)
         return 1
     except FileNotFoundError as err:
         print(f"usd-synth: file not found: {err.filename}", file=sys.stderr)

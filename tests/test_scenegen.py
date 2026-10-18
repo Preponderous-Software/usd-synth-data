@@ -214,3 +214,92 @@ def test_cli_scenes_writes_files(tmp_path, capsys):
     assert sorted(p.name for p in tmp_path.iterdir()) == [scene_filename(3), scene_filename(4)]
     golden = (GOLDEN / "small_seed7_idx3.usda").read_text(encoding="utf-8")
     assert (tmp_path / scene_filename(3)).read_text(encoding="utf-8") == golden
+
+
+def _asset_cfg(source, size=None):
+    raw = yaml.safe_load(SMALL.read_text())
+    entry = {"name": "a", "source": source, "category": "a"}
+    if size is not None:
+        entry["size_m"] = [size, size]
+    raw["objects"]["library"] = [entry]
+    raw["objects"]["count"] = [1, 1]
+    raw["objects"]["placement"] = {"yaw_deg": [0, 0], "allow_tipped": 0}
+    raw["distractors"] = {"count": [0, 0]}
+    return parse_config(raw)
+
+
+def _asset(path, body, up="Z", mpu=1.0, default='    defaultPrim = "Thing"\n'):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'#usda 1.0\n(\n{default}    metersPerUnit = {mpu}\n    upAxis = "{up}"\n)\n\n{body}'
+    )
+
+
+def _cube(name, lo, hi, extra=""):
+    pts = ", ".join(f"({x}, {y}, {z})" for x in (lo, hi) for y in (lo, hi) for z in (lo, hi))
+    return (
+        f'def Mesh "{name}"\n{{\n{extra}    int[] faceVertexCounts = [4, 4]\n'
+        "    int[] faceVertexIndices = [0, 1, 3, 2, 4, 5, 7, 6]\n"
+        f"    point3f[] points = [{pts}]\n}}\n"
+    )
+
+
+def test_asset_units_and_up_axis_are_converted(tmp_path):
+    # a 10 cm cube authored in centimetres, Y-up, offset along +Y (its "up")
+    _asset(tmp_path / "cm.usda", _cube("Thing", 0, 10), up="Y", mpu=0.01)
+    scene, text = generate_scene(_asset_cfg("cm.usda"), 1, 0, tmp_path)
+    ((lo, hi),) = _world_boxes(_stage(text))
+    np.testing.assert_allclose(hi - lo, [0.1, 0.1, 0.1], atol=1e-6)
+    assert lo[2] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_tiny_asset_scale_stays_grounded(tmp_path):
+    # a 1000-unit cube sized to 0.1004 m needs scale 1.004e-4; it must still touch the support
+    _asset(tmp_path / "big.usda", _cube("Thing", -500, 500))
+    scene, text = generate_scene(_asset_cfg("big.usda", size=0.1004), 1, 0, tmp_path)
+    ((lo, hi),) = _world_boxes(_stage(text))
+    assert (hi - lo).max() == pytest.approx(0.1004, abs=1e-7)
+    assert lo[2] == pytest.approx(0.0, abs=1e-7)
+
+
+def test_only_the_default_prim_is_bounded(tmp_path):
+    body = _cube("Thing", -0.05, 0.05) + _cube("Helper", 5, 6)
+    _asset(tmp_path / "two.usda", body)
+    scene, text = generate_scene(_asset_cfg("two.usda"), 1, 0, tmp_path)
+    ((lo, hi),) = _world_boxes(_stage(text))
+    np.testing.assert_allclose(hi - lo, [0.1, 0.1, 0.1], atol=1e-6)
+
+
+def test_asset_without_default_prim_is_rejected(tmp_path):
+    _asset(tmp_path / "nodef.usda", _cube("Thing", 0, 1), default="")
+    with pytest.raises(ValueError, match="defaultPrim"):
+        generate_scene(_asset_cfg("nodef.usda"), 1, 0, tmp_path)
+
+
+def test_asset_material_binding_is_stronger_than_descendants(tmp_path):
+    _asset(tmp_path / "a.usda", _cube("Thing", 0, 1))
+    _, text = generate_scene(_asset_cfg("a.usda", size=0.1), 1, 0, tmp_path)
+    stage = _stage(text)  # keep the stage alive while its prims are used
+    prim = stage.GetPrimAtPath("/World/Objects/inst_0001/asset")
+    rel = UsdShade.MaterialBindingAPI(prim).GetDirectBindingRel()
+    assert UsdShade.MaterialBindingAPI.GetMaterialBindingStrength(rel) == "strongerThanDescendants"
+
+
+def test_textured_support_and_floor_get_uvs(tmp_path):
+    raw = yaml.safe_load(SMALL.read_text())
+    raw["materials"] = {"textures": ["wood.png"]}
+    for index in range(20):
+        scene, text = generate_scene(parse_config(raw), 3, index, tmp_path)
+        stage = _stage(text)
+        for mat, path in [(scene.support_material, "/World/Env/Support/top"),
+                          (scene.floor_material, "/World/Env/Background")]:  # fmt: skip
+            has_st = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath(path)).HasPrimvar("st")
+            assert has_st == (mat.texture is not None)
+
+
+def test_out_of_range_seed_is_rejected(capsys):
+    with pytest.raises(ValueError, match="2\\*\\*63"):
+        generate_scene(load_config(SMALL), 2**63, 0)
+    rc = main(["scenes", "--config", str(SMALL), "--seed", str(2**63), "--count", "1",
+               "--out", "unused"])  # fmt: skip
+    assert rc == 1 and "2**63" in capsys.readouterr().err

@@ -62,8 +62,10 @@ is the only completion signal the design relies on.
   first draws of several streams; a stream-independence test proves extra draws in one stage
   leave the others unchanged.
 - The Cycles sampling seed (`scene.cycles.seed`) is derived from the `render` stream.
-- Floating-point values written to `.usda` are rounded to 6 decimals before authoring so the
-  text is byte-stable across platforms. Byte identity (same seed/index twice; scene *i* alone vs
+- Floating-point values written to `.usda` are rounded before authoring so the text is
+  byte-stable across platforms: 6 decimals for points, colours and scalars, 12 for transform
+  matrices (so a large asset scaled down to centimetres keeps its exact size). The dataset seed
+  must be in `[0, 2**63 - 1]`; it is stored as a signed 64-bit attribute. Byte identity (same seed/index twice; scene *i* alone vs
   inside a range) is tested in `tests/test_scenegen.py`.
 
 **Reproducibility contract.** The USD stage and every label derived from geometry are
@@ -110,6 +112,12 @@ instance ID. The generator places objects first, then distractors, all on the su
 an axis-aligned footprint test (`min_separation_m` apart); an object with no free spot after
 100 attempts is dropped, deterministically. Golden files in `tests/golden/` pin the generated
 text for a small fixture config.
+
+User assets are referenced by their `defaultPrim` (an asset without one is rejected), and only
+that prim is bounded for placement. The asset's own `metersPerUnit` and `upAxis` are converted
+into the instance transform (references do not convert them), an optional `size_m` then sets
+its largest extent, and the sampled material is bound `strongerThanDescendants` so it overrides
+the asset's own bindings.
 
 Design choices driven by Blender's USD importer, per the
 [Blender 5.2 manual's USD page](https://docs.blender.org/manual/en/5.2/files/import_export/usd.html):

@@ -137,7 +137,7 @@ def Xform "World"
             custom string userProperties:usd_synth:kind = "object"
             custom double userProperties:usd_synth:projected_area_px = 208.595
             custom double4 userProperties:usd_synth:projected_bbox = (76.916, 40.316, 18.908, 18.465)
-            matrix4d xformOp:transform = ( (0.853177, 0.521622, 0, 0), (-0.521622, 0.853177, 0, 0), (0, 0, 1, 0), (0.005574, 0.073647, 0.016042, 1) )
+            matrix4d xformOp:transform = ( (0.853176844266, 0.52162177141, 0, 0), (-0.52162177141, 0.853176844266, 0, 0), (0, 0, 1, 0), (0.005573723097, 0.073647461138, 0.016041555746, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
             def Mesh "inst_0001_geom" (
@@ -165,7 +165,7 @@ def Xform "World"
             custom string userProperties:usd_synth:kind = "object"
             custom double userProperties:usd_synth:projected_area_px = 578.915
             custom double4 userProperties:usd_synth:projected_bbox = (45.125, 32.96, 28.822, 30.766)
-            matrix4d xformOp:transform = ( (-0.851901, 0.523703, 0, 0), (-0.523703, -0.851901, 0, 0), (0, 0, 1, 0), (-0.090869, 0.071344, 0.032749, 1) )
+            matrix4d xformOp:transform = ( (-0.851900807432, 0.523703173846, 0, 0), (-0.523703173846, -0.851900807432, 0, 0), (0, 0, 1, 0), (-0.090869296017, 0.071343838189, 0.032749335303, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
             def Mesh "inst_0002_geom" (
@@ -193,7 +193,7 @@ def Xform "World"
             custom string userProperties:usd_synth:kind = "object"
             custom double userProperties:usd_synth:projected_area_px = 70.624
             custom double4 userProperties:usd_synth:projected_bbox = (77.822, 21.365, 4.343, 17.845)
-            matrix4d xformOp:transform = ( (0.029078, 0.999577, 0, 0), (0, 0, 1, 0), (0.999577, -0.029078, 0, 0), (-0.014723, 0.151477, 0.034224, 1) )
+            matrix4d xformOp:transform = ( (0.029078231778, 0.999577138813, 0, 0), (0, 0, 1, 0), (0.999577138813, -0.029078231778, 0, 0), (-0.014722627542, 0.151476848777, 0.034223896634, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
             def Mesh "inst_0003_geom" (
@@ -244,7 +244,7 @@ def Xform "World"
         custom double userProperties:usd_synth:focal_length_mm = 47.221539
         custom double userProperties:usd_synth:sensor_width_mm = 36
         float verticalAperture = 27
-        matrix4d xformOp:transform = ( (0.999054, -0.043482, 0, 0), (0.03717, 0.854035, 0.518886, 0), (-0.022562, -0.518395, 0.854844, 0), (-0.037111, -0.366134, 0.667335, 1) )
+        matrix4d xformOp:transform = ( (0.999054217189, -0.043481848122, 0, 0), (0.037170183009, 0.854035182345, 0.518885618236, 0), (-0.022562105645, -0.518394865138, 0.854843678802, 0), (-0.037111156562, -0.366133690184, 0.667334670607, 1) )
         uniform token[] xformOpOrder = ["xformOp:transform"]
     }
 }

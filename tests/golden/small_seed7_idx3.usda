@@ -183,7 +183,7 @@ def Xform "World"
             custom string userProperties:usd_synth:kind = "object"
             custom double userProperties:usd_synth:projected_area_px = 181.336
             custom double4 userProperties:usd_synth:projected_bbox = (56.373, 25.776, 16.762, 16.22)
-            matrix4d xformOp:transform = ( (0.429533, 0.903051, 0, 0), (-0.903051, 0.429533, 0, 0), (0, 0, 1, 0), (-0.178423, -0.033236, 0.01735, 1) )
+            matrix4d xformOp:transform = ( (0.429533292774, 0.903051023143, 0, 0), (-0.903051023143, 0.429533292774, 0, 0), (0, 0, 1, 0), (-0.178423367901, -0.033235857704, 0.01734993659, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
             def Mesh "inst_0001_geom" (
@@ -211,7 +211,7 @@ def Xform "World"
             custom string userProperties:usd_synth:kind = "object"
             custom double userProperties:usd_synth:projected_area_px = 176.765
             custom double4 userProperties:usd_synth:projected_bbox = (82.243, 43.215, 15.846, 14.316)
-            matrix4d xformOp:transform = ( (0.850674, -0.525694, 0, 0), (0.525694, 0.850674, 0, 0), (0, 0, 1, 0), (-0.045767, 0.114167, 0.011686, 1) )
+            matrix4d xformOp:transform = ( (0.850673946785, -0.525693671505, 0, 0), (0.525693671505, 0.850673946785, 0, 0), (0, 0, 1, 0), (-0.045767281216, 0.114167044987, 0.011685793669, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
             def Mesh "inst_0002_geom" (
@@ -271,7 +271,7 @@ def Xform "World"
         custom double userProperties:usd_synth:focal_length_mm = 35.136406
         custom double userProperties:usd_synth:sensor_width_mm = 36
         float verticalAperture = 27
-        matrix4d xformOp:transform = ( (0.093439, 0.995625, 0, 0), (-0.89338, 0.083844, 0.44141, 0), (0.439479, -0.041245, 0.897305, 0), (0.422746, 0.0075, 0.844787, 1) )
+        matrix4d xformOp:transform = ( (0.093439305562, 0.995624977678, 0, 0), (-0.893379737867, 0.083843599931, 0.441410120771, 0), (0.439478941639, -0.041245055153, 0.897305469325, 0), (0.422746299033, 0.007500387581, 0.844787453612, 1) )
         uniform token[] xformOpOrder = ["xformOp:transform"]
     }
 }

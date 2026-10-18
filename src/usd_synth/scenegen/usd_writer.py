@@ -20,6 +20,7 @@ from .primitives import MeshData
 from .tabletop import FLOOR_SIZE_M, FLOOR_Z_M, Instance, Material, Scene
 
 DECIMALS = 6
+MATRIX_DECIMALS = 12  # transforms keep small asset scales exact (e.g. a 1000-unit asset at 0.1 m)
 NS = "userProperties:usd_synth:"
 DOC = "usd-synth-data scene"
 SMOOTH_ANGLE_DEG = 30.0
@@ -66,7 +67,7 @@ def _vec3(values) -> Gf.Vec3f:
 
 
 def _matrix(rows) -> Gf.Matrix4d:
-    return Gf.Matrix4d(*[[_r(v) for v in row] for row in rows])
+    return Gf.Matrix4d(*[[round(float(v), MATRIX_DECIMALS) + 0.0 for v in row] for row in rows])
 
 
 def _set(prim: Usd.Prim, name: str, type_name, value) -> None:
@@ -147,7 +148,10 @@ def _instance(stage: Usd.Stage, scene: Scene, inst: Instance) -> None:
     else:
         asset = stage.DefinePrim(f"{path}/asset")
         asset.GetReferences().AddReference(inst.asset_path)
-        UsdShade.MaterialBindingAPI.Apply(asset).Bind(material)
+        # stronger than the asset's own bindings, so material randomization reaches it too
+        UsdShade.MaterialBindingAPI.Apply(asset).Bind(
+            material, UsdShade.Tokens.strongerThanDescendants
+        )
 
 
 def build_stage(scene: Scene) -> Usd.Stage:
@@ -169,14 +173,20 @@ def build_stage(scene: Scene) -> Usd.Stage:
     _set(support, "category_name", Sdf.ValueTypeNames.String, "support")
     support_mat = _material(stage, scene.support_material)
     for name, mesh, offset in scene.support_parts:
-        _mesh(stage, f"/World/Env/Support/{name}", mesh, support_mat, offset=offset)
+        _mesh(
+            stage, f"/World/Env/Support/{name}", mesh, support_mat, offset=offset,
+            uv=scene.support_material.texture is not None,
+        )  # fmt: skip
     h = FLOOR_SIZE_M / 2
     floor = MeshData(
         np.array([[-h, -h, FLOOR_Z_M], [h, -h, FLOOR_Z_M], [h, h, FLOOR_Z_M], [-h, h, FLOOR_Z_M]]),
         [4],
         [0, 1, 2, 3],
     )
-    _mesh(stage, "/World/Env/Background", floor, _material(stage, scene.floor_material))
+    _mesh(
+        stage, "/World/Env/Background", floor, _material(stage, scene.floor_material),
+        uv=scene.floor_material.texture is not None,
+    )  # fmt: skip
 
     UsdGeom.Xform.Define(stage, "/World/Objects")
     UsdGeom.Xform.Define(stage, "/World/Distractors")

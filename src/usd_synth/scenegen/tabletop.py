@@ -49,7 +49,7 @@ class Instance:
     local_points: np.ndarray  # mesh points, or the asset's bounding-box corners
     mesh: MeshData | None  # None for referenced assets
     asset_path: str | None
-    asset_scale: float
+    asset_basis: np.ndarray  # (3, 3) asset frame -> instance frame (units, up axis, size)
     material: Material
     projected_bbox: tuple[float, float, float, float] | None = None
     projected_area_px: float = 0.0
@@ -59,7 +59,7 @@ class Instance:
 
     def matrix(self) -> list[list[float]]:
         m = np.eye(4)
-        m[:3, :3] = (self.rotation * self.asset_scale).T
+        m[:3, :3] = (self.rotation @ self.asset_basis).T
         m[3, :3] = self.translation
         return m.tolist()
 
@@ -171,35 +171,42 @@ def _support(cfg: Config, rng: np.random.Generator):
     return kind, (sx, sy), parts, region
 
 
-def _asset_corners(path: Path) -> np.ndarray:
+def _asset_bounds(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Corners of the asset's default prim (the prim a reference brings in) and the basis that
+    converts the asset's own units and up axis to this stage's metres and +Z up."""
     from pxr import Usd, UsdGeom
 
     stage = Usd.Stage.Open(str(path))
-    box = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render"]).ComputeWorldBound(
-        stage.GetPseudoRoot()
-    )
-    rng = box.ComputeAlignedRange()
-    lo, hi = np.array(rng.GetMin()), np.array(rng.GetMax())
+    prim = stage.GetDefaultPrim()
+    if not prim:
+        raise ValueError(f"asset {path} has no defaultPrim; it cannot be referenced")
+    bound = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render"]).ComputeWorldBound(prim)
+    rng = bound.ComputeAlignedRange()
     if rng.IsEmpty():
-        raise ValueError(f"asset {path} has no geometry to bound")
-    return np.array(
+        raise ValueError(f"asset {path} has no geometry under its defaultPrim to bound")
+    lo, hi = np.array(rng.GetMin()), np.array(rng.GetMax())
+    corners = np.array(
         [[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
     )
+    basis = UsdGeom.GetStageMetersPerUnit(stage) * np.eye(3)
+    if UsdGeom.GetStageUpAxis(stage) == UsdGeom.Tokens.y:
+        basis = _rot_x(math.pi / 2) @ basis  # +Y up -> +Z up
+    return corners, basis
 
 
 def _make_object(entry: LibraryEntry, rng: np.random.Generator, config_dir: Path):
-    """(local points, mesh or None, asset path or None, uniform asset scale)."""
+    """(local points, mesh or None, asset path or None, asset basis)."""
     if entry.source.startswith("primitive:"):
         size = _uniform(rng, entry.size_m)
         mesh, _ = primitives.build(entry.source.split(":", 1)[1], size, rng)
-        return mesh.points, mesh, None, 1.0
+        return mesh.points, mesh, None, np.eye(3)
     path = (config_dir / entry.source).resolve()
-    corners = _asset_corners(path)
-    scale = 1.0
+    corners, basis = _asset_bounds(path)
     size = _uniform(rng, entry.size_m) if entry.size_m else None
     if size is not None:
-        scale = size / float(np.max(corners.max(axis=0) - corners.min(axis=0)))
-    return corners * scale, None, str(path), scale
+        native = corners @ basis.T
+        basis = basis * (size / float(np.max(native.max(axis=0) - native.min(axis=0))))
+    return corners @ basis.T, None, str(path), basis
 
 
 def _footprint(points: np.ndarray) -> np.ndarray:
@@ -262,7 +269,7 @@ def sample_scene(cfg: Config, dataset_seed: int, index: int, config_dir: Path | 
     instances: list[Instance] = []
     for _ in range(_integer(obj_rng, cfg.objects.count)):
         entry = cfg.objects.library[int(obj_rng.integers(0, len(cfg.objects.library)))]
-        points, mesh, asset_path, scale = _make_object(entry, obj_rng, config_dir)
+        points, mesh, asset_path, basis = _make_object(entry, obj_rng, config_dir)
         tipped = bool(pose_rng.random() < place.allow_tipped)
         pose = _place(
             points, pose_rng, place.yaw_deg, tipped, region, placed, place.min_separation_m
@@ -284,7 +291,7 @@ def sample_scene(cfg: Config, dataset_seed: int, index: int, config_dir: Path | 
                 points,
                 mesh,
                 asset_path,
-                scale,
+                basis,
                 material,
             )
         )
@@ -314,7 +321,7 @@ def sample_scene(cfg: Config, dataset_seed: int, index: int, config_dir: Path | 
                 mesh.points,
                 mesh,
                 None,
-                1.0,
+                np.eye(3),
                 material,
             )
         )
