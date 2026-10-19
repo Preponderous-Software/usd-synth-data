@@ -153,6 +153,7 @@ the state: owners by colour, army size by figure count, plus unlabelled scenery 
 - Kubernetes Indexed Jobs (any cluster ≥ v1.33; `kind` for local testing)
 - S3-compatible object storage for cluster runs (MinIO for local testing)
 - pytest, ruff
+- usd-asset-gate (CI check of the committed and generated USD scenes)
 
 ---
 

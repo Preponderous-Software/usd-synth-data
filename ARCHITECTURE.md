@@ -441,6 +441,7 @@ Versions are the latest available at planning time (October 2026) and are pinned
 | [OpenEXR](https://pypi.org/project/OpenEXR/) | 3.5.2 | `passes`, labels | Reads the multilayer EXR passes. |
 | [Pillow](https://pypi.org/project/pillow/) | 13.0.0 | labels, tests | PNG reading/writing (RGB, 16-bit depth). |
 | pytest, ruff | 9.1.1, 0.17.1 | dev | CI runs `ruff check`, `ruff format --check` and `pytest`. |
+| [usd-asset-gate](https://github.com/Preponderous-Software/usd-asset-gate) | commit `e8b2853` | CI only | OpenUSD validators plus the house rules in `.usd-asset-gate.yml`; no release tag yet, so pinned by full commit SHA in `.github/workflows/usd-asset-gate.yml`, run with `usd-core` 26.8. |
 | [kind](https://github.com/kubernetes-sigs/kind) | 0.33.0 (SHA-256 checked in CI) | M7 integration test | Any conformant cluster ≥ v1.33 works for real runs. |
 | [boto3](https://pypi.org/project/boto3/) | 1.43.114 | `storage` (S3 sink) | **S3 client, chosen in M7.** The reference S3 SDK (Apache-2.0); accepts any endpoint (`AWS_ENDPOINT_URL`) and is used with path-style addressing so MinIO and other S3-compatible stores work. Picked over the MinIO Python SDK because MinIO's upstream archived its repositories in 2025 and boto3 is maintained and provider-neutral. Host-side only. |
 | [MinIO](https://github.com/minio/minio) | `RELEASE.2025-10-15T17-29-55Z` (commit `9e49d5e`) | M7 tests | S3-compatible store run inside the `kind` cluster and in the storage CI job. Upstream stopped publishing images and binaries and archived the repository, so it is built from source at its final release tag, pinned by commit (`deploy/minio/Dockerfile`, Go 1.24.8). Used unmodified as a separate AGPL-3.0 test service; any S3-compatible store works for real runs. |
@@ -467,6 +468,13 @@ Versions are the latest available at planning time (October 2026) and are pinned
   kubectl, and touches only the `kind-usd-synth-e2e` context it creates) deploys MinIO in the
   cluster, runs a 4-shard Indexed Job writing to it, deletes one pod mid-run, and compares the
   merged dataset with a local run.
+- **USD assets:** the `USD asset gate` workflow runs
+  [usd-asset-gate](https://github.com/Preponderous-Software/usd-asset-gate) with the house rules
+  in `.usd-asset-gate.yml` (`metersPerUnit: 1`, `upAxis: Z`, 10 MB per file, `fail_on:
+  warning`). Job `committed stages` checks the golden scenes (on a pull request, only the USD
+  files it changed); job `generated stages` runs `usd-synth scenes --seed 42 --count 3` for
+  every `configs/*.yaml` and checks every written scene, so a new config is gated as soon as it
+  is added.
 
 ## Decisions
 
