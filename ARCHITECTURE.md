@@ -507,8 +507,9 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    importer merges the instance Xform with its mesh (see USD stage layout).
 3. **Asset sources.** Which openly licensed object/texture/HDRI collections to recommend in
    docs (license must permit dataset redistribution)? The MVP ships only procedural primitives.
-4. **Visible-fraction estimate.** Is the projected-3D-box area a good enough denominator for
-   `min_visible_fraction`, or is a per-instance unoccluded render worth its cost?
+4. **Visible-fraction estimate.** Is the convex-hull area of the projected mesh points
+   (`projected_area_px`; for user assets, of their bounding-box corners) a good enough
+   denominator for `min_visible_fraction`, or is a per-instance unoccluded render worth its cost?
 5. **Batch size per Blender process.** Measured in M6: start-up is about 0.1 s per scene, so
    for CPU rendering at 640×480 the batch size barely affects throughput; the default of 8
    keeps a failed batch cheap to retry. Memory growth over long batches is not yet measured.
