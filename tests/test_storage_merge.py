@@ -67,6 +67,76 @@ def test_done_scenes_counts_only_done_objects(make_sink):
     assert sink.done_scenes(1) == {5}
 
 
+def test_done_scenes_ignores_done_objects_outside_a_scene_directory(make_sink):
+    sink = make_sink()
+    sink.put_bytes("shards/0/scenes/000003/extra/DONE", b"")
+    sink.put_bytes("shards/0/scenes/DONE", b"")
+    sink.put_bytes("shards/0/DONE", b"")
+    assert sink.done_scenes(0) == set()
+
+
+@pytest.mark.parametrize("key", ["/abs/key", "../outside", "a/../../b", ".."])
+def test_keys_escaping_the_sink_root_are_rejected(make_sink, key):
+    sink = make_sink()
+    for call in (
+        lambda: sink.put_bytes(key, b"x"),
+        lambda: sink.get_bytes(key),
+        lambda: sink.exists(key),
+    ):
+        with pytest.raises(ValueError, match="invalid key"):
+            call()
+
+
+def test_shards_lists_only_numbered_shards_with_a_description(make_sink):
+    sink = make_sink()
+    for key in (
+        "shards/10/shard.json",
+        "shards/2/shard.json",
+        "shards/0/shard.json",
+        "shards/1/scenes/000000/DONE",  # outputs but no shard.json
+        "shards/tmp/shard.json",  # not a shard number
+        "shards/3/sub/shard.json",  # not directly under the shard
+    ):
+        sink.put_bytes(key, b"{}")
+    assert sink.shards() == [0, 2, 10]
+
+
+def test_local_sink_hides_partial_files_and_lists_a_single_key(tmp_path):
+    sink = LocalSink(tmp_path)
+    sink.put_bytes("a/done.txt", b"x")
+    (tmp_path / "a" / "torn.txt.part").write_bytes(b"half")
+    assert sink.list("a/") == ["a/done.txt"]
+    assert sink.list("") == ["a/done.txt"]
+    assert sink.list("a/done.txt") == ["a/done.txt"]
+    assert sink.describe("a/done.txt") == str(tmp_path / "a" / "done.txt")
+
+
+@pytest.mark.parametrize(
+    "uri, bucket, prefix",
+    [
+        ("s3://bucket", "bucket", ""),
+        ("s3://bucket/", "bucket", ""),
+        ("s3://bucket/run", "bucket", "run/"),
+        ("s3://bucket//nested/run//", "bucket", "nested/run/"),
+    ],
+)
+def test_s3_uri_parsing_normalizes_the_prefix(monkeypatch, uri, bucket, prefix):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    sink = S3Sink.from_uri(uri)
+    assert (sink.bucket, sink.prefix) == (bucket, prefix)
+    assert sink.describe("k") == f"s3://{bucket}/{prefix}k"
+
+
+@pytest.mark.parametrize(
+    "uri, match",
+    [("s3:///prefix", "needs a bucket"), ("http://bucket/prefix", "not an s3:// URI")],
+)
+def test_s3_uri_without_a_bucket_or_scheme_is_rejected(uri, match):
+    with pytest.raises(ValueError, match=match):
+        S3Sink.from_uri(uri)
+
+
 def _merged_annotations(sink):
     return json.loads(sink.get_bytes(sink.dataset_prefix + "annotations.json"))
 
