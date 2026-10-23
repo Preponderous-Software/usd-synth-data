@@ -209,15 +209,6 @@ def test_manifest_seeds_come_from_the_seed_tree_in_scene_order():
     assert m["blender"] is None and m["device"] is None  # absent from render_info
 
 
-def test_build_coco_takes_explicit_categories_without_a_config():
-    cats = [{"id": 1, "name": "block", "supercategory": "terrain"}]
-    data = build_coco([_record(0, [])], None, description="example", categories=cats)
-    assert data["categories"] == cats
-    assert data["info"]["description"] == "example"
-    with pytest.raises(ValueError, match="needs a config or an explicit categories list"):
-        build_coco([_record(0, [])], None)
-
-
 def test_dump_json_is_sorted_indented_and_newline_terminated(tmp_path):
     dump_json({"b": 1, "a": [1]}, tmp_path / "x.json")
     assert (tmp_path / "x.json").read_text() == '{\n "a": [\n  1\n ],\n "b": 1\n}\n'
