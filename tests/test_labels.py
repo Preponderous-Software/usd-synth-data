@@ -18,6 +18,7 @@ from usd_synth.labels import (
     tight_bbox,
     write_depth_png,
 )
+from usd_synth.seeds import render_seed, scene_seed
 
 SMALL = Path(__file__).resolve().parent / "data" / "small.yaml"
 
@@ -195,3 +196,58 @@ def test_manifest_records_provenance():
     assert m["config_hash"] == cfg.config_hash() and m["dataset_seed"] == 42
     assert m["blender"] == "5.2.2" and m["device"] == "cpu" and m["samples"] == cfg.render.samples
     assert m["images"][0]["scene_index"] == 5 and m["images"][0]["image_id"] == 5
+
+
+def test_manifest_seeds_come_from_the_seed_tree_in_scene_order():
+    cfg = _cfg()
+    m = build_manifest(cfg, 42, [_record(i, []) for i in (7, 2)], {}, "/cfg")
+    assert [im["scene_index"] for im in m["images"]] == [2, 7]
+    for im in m["images"]:
+        assert im["scene_seed"] == scene_seed(42, im["scene_index"])
+        assert im["render_seed"] == render_seed(42, im["scene_index"])
+    assert m["resolution"] == [cfg.image.width, cfg.image.height]
+    assert m["blender"] is None and m["device"] is None  # absent from render_info
+
+
+def test_build_coco_takes_explicit_categories_without_a_config():
+    cats = [{"id": 1, "name": "block", "supercategory": "terrain"}]
+    data = build_coco([_record(0, [])], None, description="example", categories=cats)
+    assert data["categories"] == cats
+    assert data["info"]["description"] == "example"
+    with pytest.raises(ValueError, match="needs a config or an explicit categories list"):
+        build_coco([_record(0, [])], None)
+
+
+def test_dump_json_is_sorted_indented_and_newline_terminated(tmp_path):
+    dump_json({"b": 1, "a": [1]}, tmp_path / "x.json")
+    assert (tmp_path / "x.json").read_text() == '{\n "a": [\n  1\n ],\n "b": 1\n}\n'
+
+
+def _separated_anns():
+    # two 4x4 instances that never overlap, so each annotation's mask, box and area are known
+    index = np.zeros((10, 10), dtype=np.int32)
+    index[0:4, 0:4] = 1
+    index[5:9, 5:9] = 2
+    return label_scene(index, [_obj(1, 16), _obj(2, 16, "torus")], _cfg())
+
+
+def test_each_remaining_validator_check_reports_its_annotation(tmp_path):
+    data = build_coco([_record(i, _separated_anns()) for i in range(3)], _cfg())
+    path = tmp_path / "annotations.json"
+    dump_json(data, path)
+    assert validate_coco(path) == []
+
+    anns = data["annotations"]
+    anns[0]["image_id"] = 999
+    anns[1]["segmentation"] = encode_rle(np.zeros((10, 10), dtype=bool))
+    anns[2]["bbox"] = [0.0, 0.0, 4.0, 4.0, 1.0]
+    anns[3]["bbox"] = [5.0, 5.0, 0.0, 4.0]
+    anns[4]["area"] = anns[4]["area"] + 5
+    dump_json(data, path)
+    assert validate_coco(path) == [
+        "annotation 1: unknown image_id 999",
+        "annotation 2: empty mask",
+        "annotation 3: non-finite or malformed bbox/area [0.0, 0.0, 4.0, 4.0, 1.0, 16.0]",
+        "annotation 4: bbox [5.0, 5.0, 0.0, 4.0] has no extent",
+        "annotation 5: area 21.0 != mask pixels 16",
+    ]
