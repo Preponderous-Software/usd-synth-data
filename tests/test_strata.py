@@ -197,6 +197,8 @@ def test_depth_is_planar(tmp_path, strata):
     cfg = _cfg()
     info = render_batch(cfg, [scene_spec(usd, tmp_path / "r")], strata).scenes[0]
     if not info["depth"]:
+        if os.environ.get("USD_SYNTH_REQUIRE_STRATA") == "1":  # CI pins Strata 0.5.0 (ABI 1.9)
+            pytest.fail(f"Strata {info['strata']} (ABI {info['strata_abi']}) has no depth readback")
         pytest.skip(f"Strata {info['strata']} (ABI {info['strata_abi']}) has no depth readback")
     depth = read_passes(tmp_path / "r" / "aux.exr").depth
     assert np.allclose(depth[[0, 0, -1, -1, 60], [0, -1, 0, -1, 80]], 1.0, atol=2e-3)

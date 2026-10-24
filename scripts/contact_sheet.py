@@ -146,11 +146,12 @@ def main() -> None:
     sheet = Image.new("RGB", (width, height), BG)
     d = ImageDraw.Draw(sheet)
 
+    strata = env.get("engine") == "strata"
     d.text((MARGIN, 16), "usd-synth-data", font=font(26, bold=True), fill=FG)
     d.text(
         (MARGIN + 232, 24),
-        "randomized OpenUSD tabletop scenes, rendered headless in Blender Cycles, "
-        "with exact ground truth",
+        "randomized OpenUSD tabletop scenes, rendered headless in "
+        f"{'Strata (llvmpipe)' if strata else 'Blender Cycles'}, with exact ground truth",
         font=font(15),
         fill=MUTED,
     )
@@ -194,13 +195,21 @@ def main() -> None:
 
     render = thr["stages"]["render"]
     w, h = env["resolution"]
-    line1 = (
-        f"seed {manifest['dataset_seed']} · {w}×{h} · {env['samples']} samples, "
-        f"{'denoised' if env['denoise'] else 'no denoise'} · Cycles {env['device'].upper()} "
-        f"({env['threads']} threads, {env['cpu_model']}) · Blender {env['blender']}"
-    )
+    prec = 2 if strata else 1
+    if strata:
+        line1 = (
+            f"seed {manifest['dataset_seed']} · {w}×{h} · rasterized, no samples · "
+            f"Strata {env['strata']} on llvmpipe ({env['threads']} threads, {env['cpu_model']})"
+        )
+    else:
+        line1 = (
+            f"seed {manifest['dataset_seed']} · {w}×{h} · {env['samples']} samples, "
+            f"{'denoised' if env['denoise'] else 'no denoise'} · Cycles {env['device'].upper()} "
+            f"({env['threads']} threads, {env['cpu_model']}) · Blender {env['blender']}"
+        )
     line2 = (
-        f"measured: render {render['mean_s']:.1f} s/image mean (p95 {render['p95_s']:.1f} s) · "
+        f"measured: render {render['mean_s']:.{prec}f} s/image mean "
+        f"(p95 {render['p95_s']:.{prec}f} s) · "
         f"{thr['images']} images in {thr['wall_seconds']:.0f} s = {thr['images_per_hour']:.0f} "
         f"images/hour · all labels from annotations.json + depth/, unedited"
     )
