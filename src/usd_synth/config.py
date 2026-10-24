@@ -65,12 +65,18 @@ class ImageConfig(_Model):
 
 
 class RenderConfig(_Model):
-    engine: Literal["cycles"] = "cycles"
+    engine: Literal["cycles", "strata"] = "cycles"
     device: Literal["cpu", "gpu"] = "cpu"
     samples: int = Field(64, ge=1, le=65536)
     denoise: bool = True
     threads: int = Field(0, ge=0, le=1024, description="0 = let Blender decide")
     batch_size: int = Field(8, ge=1, le=10000, description="scenes per Blender process")
+
+    @model_validator(mode="after")
+    def _strata_is_cpu(self) -> RenderConfig:
+        if self.engine == "strata" and self.device == "gpu":
+            raise ValueError("device gpu is not supported with engine strata (CPU llvmpipe only)")
+        return self
 
 
 class LibraryEntry(_Model):

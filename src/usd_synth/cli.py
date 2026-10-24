@@ -37,7 +37,7 @@ def _cmd_scenes(args: argparse.Namespace) -> int:
 def _cmd_render(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from .render import find_blender, render_batch, scene_spec
+    from .render import find_renderer, render_batch, scene_spec
 
     cfg = load_config(args.config)
     src = Path(args.scenes)
@@ -45,14 +45,15 @@ def _cmd_render(args: argparse.Namespace) -> int:
     if not files:
         print(f"usd-synth render: no .usda files in {src}", file=sys.stderr)
         return 1
-    blender = find_blender(args.blender)
+    blender = find_renderer(cfg, args.blender, args.strata)
     specs = [scene_spec(f, Path(args.out) / f.stem) for f in files]
     size = cfg.render.batch_size
     for start in range(0, len(specs), size):
         result = render_batch(cfg, specs[start : start + size], blender, threads=args.threads)
         for info in result.scenes:
             t = info["timings"]
-            print(f"{info['usd']}: render {t['render']:.2f}s ({info['device']})")
+            engine = info.get("engine", "cycles")
+            print(f"{info['usd']}: render {t['render']:.2f}s ({engine}, {info['device']})")
     return 0
 
 
@@ -101,7 +102,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
     from .merge import merge
     from .pipeline import prepare_shard, run_shard
-    from .render import find_blender
+    from .render import find_renderer
     from .storage import open_sink, shard_prefix
 
     cfg = load_config(args.config)
@@ -118,7 +119,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         raise ValueError("--workers must be >= 1")
     sink = open_sink(args.out)
     config_dir = Path(args.config).resolve().parent
-    blender = find_blender(args.blender)
+    blender = find_renderer(cfg, args.blender, args.strata)
     threads = args.threads if args.threads is not None else cfg.render.threads
 
     if args.shard_index is not None:  # one shard only (e.g. one Kubernetes pod); merge later
@@ -205,13 +206,15 @@ def _cmd_k8s_manifest(args: argparse.Namespace) -> int:
 def _cmd_reproduce(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from .render import find_blender
+    from .config import parse_config
+    from .render import find_renderer
     from .reproduce import reproduce
 
+    manifest = json.loads((Path(args.dataset) / "manifest.json").read_text(encoding="utf-8"))
+    renderer = find_renderer(parse_config(manifest["config"]), args.blender, args.strata)
     report = reproduce(
-        Path(args.dataset), args.image_id, Path(args.out), find_blender(args.blender),
-        threads=args.threads,
-    )  # fmt: skip
+        Path(args.dataset), args.image_id, Path(args.out), renderer, threads=args.threads
+    )
     print(
         f"image {report['image_id']} (scene {report['scene_index']}): "
         f"usda identical={report['usda_identical']}, "
@@ -225,7 +228,7 @@ def _cmd_reproduce(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usd-synth",
-        description="Procedural synthetic-dataset generator (OpenUSD + Blender Cycles + COCO).",
+        description="Procedural synthetic-dataset generator (OpenUSD + Cycles or Strata + COCO).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -243,11 +246,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="directory for scene_NNNNNN.usda files")
     p.set_defaults(func=_cmd_scenes)
 
-    p = sub.add_parser("render", help="render USD scenes with Blender (RGB + depth + index)")
+    p = sub.add_parser(
+        "render", help="render USD scenes (RGB + depth + index) with Cycles or Strata"
+    )
     p.add_argument("--config", required=True, help="config providing render settings")
     p.add_argument("--scenes", required=True, help="a .usda file or a directory of them")
     p.add_argument("--out", required=True, help="output directory (one subdirectory per scene)")
     p.add_argument("--blender", help="Blender binary (default: $USD_SYNTH_BLENDER or PATH)")
+    p.add_argument("--strata", help="libstrata.so for render.engine: strata "
+                   "(default: $USD_SYNTH_STRATA, /opt/strata/lib, or the loader path)")  # fmt: skip
     p.add_argument("--threads", type=int, help="override render.threads")
     p.set_defaults(func=_cmd_render)
 
@@ -257,6 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--count", type=int, required=True, help="number of images")
     p.add_argument("--out", required=True, help="dataset directory (re-run to resume)")
     p.add_argument("--blender", help="Blender binary (default: $USD_SYNTH_BLENDER or PATH)")
+    p.add_argument("--strata", help="libstrata.so for render.engine: strata "
+                   "(default: $USD_SYNTH_STRATA, /opt/strata/lib, or the loader path)")  # fmt: skip
     p.add_argument("--threads", type=int, help="override render.threads")
     p.add_argument("--batch-size", type=int, help="override render.batch_size")
     p.add_argument("--workers", type=int, default=1, help="local worker processes (shards)")
@@ -270,6 +279,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--image-id", type=int, required=True, help="COCO image id")
     p.add_argument("--out", required=True, help="directory for the regenerated image")
     p.add_argument("--blender", help="Blender binary (default: $USD_SYNTH_BLENDER or PATH)")
+    p.add_argument("--strata", help="libstrata.so for render.engine: strata "
+                   "(default: $USD_SYNTH_STRATA, /opt/strata/lib, or the loader path)")  # fmt: skip
     p.add_argument("--threads", type=int, help="override render.threads")
     p.set_defaults(func=_cmd_reproduce)
 

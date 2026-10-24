@@ -11,6 +11,9 @@ permissions:
 env:
   BLENDER_VERSION: "5.2.2"
   BLENDER_SHA256: "84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168"
+  # Strata release .so (render.engine: strata), checked against the release's SHA256SUMS
+  STRATA_VERSION: "0.4.0"
+  STRATA_SHA256: "6044127f21c33abbd03d4e39182b5a6082c73e92479236bbd0aea6e68594b181"
 
 jobs:
   test:
@@ -67,6 +70,33 @@ jobs:
       - name: Pytest (Blender required)
         run: pytest -m blender -v --durations=10
 
+  strata:
+    name: render tests (Strata)
+    runs-on: ubuntu-24.04
+    env:
+      USD_SYNTH_STRATA: ${{ github.workspace }}/.strata/libstrata.so
+      USD_SYNTH_REQUIRE_STRATA: "1"
+      USD_SYNTH_TEST_THREADS: "4"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: llvmpipe
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Strata and Mesa llvmpipe (EGL surfaceless, no X server)
+        run: |
+          mkdir -p .strata
+          curl -fsSL -o .strata/libstrata.so \
+            "https://github.com/Preponderous-Software/strata/releases/download/v${STRATA_VERSION}/libstrata-${STRATA_VERSION}-linux-x64.so"
+          echo "${STRATA_SHA256}  .strata/libstrata.so" | sha256sum -c -
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libegl1 libgl1-mesa-dri
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Pytest (Strata required)
+        run: pytest -m strata -v --durations=10
+
   image:
     name: render worker image
     runs-on: ubuntu-24.04
@@ -88,6 +118,17 @@ jobs:
           assert rgb.size == (640, 480), rgb.size
           assert p.depth.shape == p.index.shape == (480, 640)
           print("container render OK:", rgb.size, "instance ids", sorted(set(p.index.ravel().tolist())))
+          PY
+            sed "s/engine: cycles/engine: strata/" configs/tabletop.yaml > /tmp/strata.yaml
+            usd-synth render --config /tmp/strata.yaml --scenes /tmp/s --out /tmp/rs
+            python - <<PY
+          from PIL import Image
+          from usd_synth.passes import read_passes
+          a = read_passes("/tmp/r/scene_000000/aux.exr").index
+          b = read_passes("/tmp/rs/scene_000000/aux.exr").index
+          assert Image.open("/tmp/rs/scene_000000/rgb.png").size == (640, 480)
+          print("container Strata render OK; label maps agree on", f"{(a == b).mean():.5f}", "of pixels")
+          assert (a == b).mean() > 0.999
           PY
           '
 

@@ -80,6 +80,34 @@ See [MVP.md](MVP.md) for the full scope, acceptance criteria and milestones.
 
 ---
 
+## ⚡ Fast Tier: Strata Instead of Cycles
+
+Set `render.engine: strata` (or use [`configs/tabletop-strata.yaml`](configs/tabletop-strata.yaml))
+to render the same scenes with [Strata](https://github.com/Preponderous-Software/strata), a
+rasterizer, headless on the CPU through Mesa llvmpipe. Cycles stays the default. Masks and boxes
+come from an exact instance-ID pass, so the labels match Cycles; what you give up is the look:
+no glossy or metallic surfaces, no HDRI lighting, hard shadows.
+
+![Cycles vs Strata: the same six randomized scenes rendered by each engine, with the COCO instance masks each dataset wrote, and where the two label maps disagree](docs/images/cycles-vs-strata.png)
+
+*The same six scenes (`--seed 2026`, 640×480) from two `usd-synth generate` runs, one per
+engine, each overlaid with the masks from its own `annotations.json`; the right column marks
+where the two label maps disagree (at most 4 pixels in an image). Measured on one machine
+under heavy load: Cycles 30.0 s and Strata 0.44 s per render, 112 vs 2,712 images/hour
+end to end. Rebuild with [`scripts/engine_compare.py`](scripts/engine_compare.py).*
+
+```bash
+export USD_SYNTH_STRATA=/path/to/libstrata-0.4.0-linux-x64.so   # from the Strata releases page
+usd-synth generate --config configs/tabletop-strata.yaml --seed 42 --count 200 --out out/fast
+```
+
+It needs Mesa's EGL and llvmpipe (`apt install libegl1 libgl1-mesa-dri`); the worker image
+already has both and the library. Depth needs the depth readback of Strata ABI 1.9: with Strata
+0.4.0 the depth PNGs are empty and the manifest says `"depth": false`. Each scene records what
+the rasterizer ignored. Details: [ARCHITECTURE.md, Strata backend](ARCHITECTURE.md#strata-backend).
+
+---
+
 ## 🌐 World Domains
 
 Besides the bundled tabletop scenario, the [`examples/`](examples/) directory turns worlds from
@@ -146,6 +174,8 @@ the state: owners by colour, army size by figure count, plus unlabelled scenery 
 - Python 3.12+
 - OpenUSD (`usd-core`)
 - Blender 5.2 LTS (Cycles), run headless
+- Optional: [Strata](https://github.com/Preponderous-Software/strata) 0.4.0 through `ctypes`,
+  on Mesa llvmpipe (`render.engine: strata`)
 - NumPy, Pydantic, PyYAML, OpenEXR, Pillow
 - boto3 (any S3-compatible endpoint)
 - pycocotools
@@ -218,7 +248,7 @@ usd-synth render --config configs/tabletop.yaml --scenes out/scenes --out out/re
 pytest                                            # run the test suite
 ```
 
-Or in the render worker image (Blender 5.2.2 included, CPU rendering):
+Or in the render worker image (Blender 5.2.2 and Strata 0.4.0 included, CPU rendering):
 
 ```bash
 docker build -t usd-synth .

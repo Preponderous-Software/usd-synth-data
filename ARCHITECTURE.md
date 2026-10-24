@@ -11,6 +11,7 @@ each verification point the plan left open is recorded below with the test that 
 | `seeds` | host Python | Derive per-scene and per-stage random streams from `(dataset seed, scene index)`. |
 | `scenegen` | host Python + `usd-core` | Sample a scene from the config and write a flattened `.usda` stage. One module per scenario (`tabletop` in the MVP; an outdoor `terrain` scenario is planned after it). |
 | `render_worker` | Blender's bundled Python (`blender -b --python`) | `blender_worker.py`: for each scene of a batch, reset to an empty file, import the stage, assign pass indices, configure Cycles (device, samples, denoiser, seed, threads, resolution), render, and write `rgb.png`, `aux.exr` (multilayer: Combined, Depth, Object Index) and `render.json` (timings, Blender version, device). Imports only `bpy` and the standard library. The host side (`render.py`) reads per-scene inputs from the stage and passes them as a JSON job; `render.batch_size` scenes share one Blender process. |
+| `strata_backend` | host Python + `libstrata.so` (ctypes) | `render.engine: strata` (optional; Cycles stays the default): read the flattened stage with `pxr`, draw it with [Strata](https://github.com/Preponderous-Software/strata) headless on Mesa llvmpipe (one EGL context per process, reused), and write the same `rgb.png`, `aux.exr` and `render.json` as the Blender worker. `strata.py` is the ctypes binding; see [Strata backend](#strata-backend). |
 | `labels` | host Python | Turn auxiliary passes into instance masks, boxes and depth; write COCO. |
 | `pipeline` | host Python | Orchestrate generate → render → label for a shard; write per-scene outputs atomically; timing. |
 | `merge` | host Python | Combine shard outputs into one dataset (`annotations.json`, `manifest.json`, `throughput.json`). |
@@ -309,7 +310,63 @@ face depth 0.900 m. `tests/test_labels_render.py` asserts the MVP bounds (2 px, 
 | `bpy` from PyPI (Blender as a Python module) | Same as above | Same | Same | Attractive (no separate Blender binary), but each `bpy` release targets one Python version (the 5.2 wheels require Python 3.13, per [PyPI](https://pypi.org/project/bpy/)) and older versions are removed from PyPI. Kept as an option; the MVP uses the Blender binary in a container for pinning. |
 | [Omniverse Replicator / Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/latest/replicator_tutorials/index.html) | NVIDIA RTX-class GPU only | Native USD | Isaac Sim source Apache-2.0, plus required NVIDIA components under a [separate license](https://www.nvidia.com/en-us/agreements/enterprise-software/isaac-sim-additional-software-and-materials-license/) | Strongest USD fit and built-in annotators/`CocoWriter`, but excludes CPU-only machines and CI, and pulls in non-open components. **Candidate post-MVP backend.** |
 | Blender EEVEE | GPU (OpenGL/Vulkan) required even headless | Same as Cycles | GPL | Much faster but needs a GPU context in containers; less physically accurate. Post-MVP option for throughput experiments. |
+| [Strata](https://github.com/Preponderous-Software/strata) (rasterizer) through ctypes, `render.engine: strata` | CPU everywhere (Mesa llvmpipe, EGL surfaceless, no X server); Linux x64 | Stage read with `pxr` in the host process, uploaded as triangles | MIT | **Optional second backend** since 2026-10-23 (Decision 5). About 68× faster render step (measured); no glossy, metallic, HDRI or soft-shadow effects. Labels are exact (see [Strata backend](#strata-backend)). |
 | Kubric / BlenderProc as the engine | — | No USD scene input | Apache-2.0 / GPL-3.0 | Would replace the USD contract with their own scene model; see CONCEPT.md prior art. |
+
+## Strata backend
+
+`render.engine: strata` is an optional fast tier beside Cycles, designed in Preponderous
+RFC 0026 and accepted by the owner on 2026-10-23 (Decision 5). Cycles remains the default and
+nothing about it changed. The backend lives in `strata_backend.py`, with a ctypes binding to
+Strata's versioned C ABI in `strata.py`, and runs in the host process: there is no subprocess and
+no Blender. It writes the same per-scene files as the Blender worker, so the label stage, merge,
+reproduce, the sinks and the Kubernetes manifests are shared.
+
+- **Library.** The released Linux `.so` (`libstrata-<version>-linux-x64.so`, built on
+  `manylinux_2_28`), found as `--strata` > `$USD_SYNTH_STRATA` > `/opt/strata/lib/libstrata.so`
+  (the worker image) > the loader path. The binding requires ABI 1.8 (Strata 0.4.0) and checks
+  every struct it uses against `strata_struct_size()` at load, so a mismatched library fails
+  loudly. CI and the image pin Strata 0.4.0 by SHA-256 from the release's `SHA256SUMS`.
+- **Headless.** `STRATA_SURFACE_HEADLESS` (EGL surfaceless) on Mesa llvmpipe:
+  `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe` are set if unset, and `--threads`
+  (the pod CPU limit on Kubernetes) becomes `LP_NUM_THREADS`. `render.device: gpu` with
+  `strata` is a config error.
+- **Stage translation.** Every visible `UsdGeom.Mesh` is fan-triangulated (exact for the
+  generator's convex faces) with its world transform, authored face-varying normals and bound
+  `UsdPreviewSurface` diffuse colour, or its `UsdUVTexture` (decoded from sRGB). USD's Z-up is
+  mapped to Strata's Y-up as `(x, y, z) → (x, z, −y)`, a proper rotation, so winding is kept.
+  All geometry goes up as a few large meshes with per-vertex colours, so a scene never meets
+  Strata's 256-mesh limit. The camera uses the same pinhole model as `camera.PinholeCamera`
+  (horizontal sensor fit); a unit test projects every cube corner through both and requires
+  agreement to 0.001 px.
+- **Labels: the ID pass.** A second frame draws every mesh `STRATA_MESH_UNLIT` with its
+  instance ID packed into the vertex colour (`r | g << 8 | b << 16`). The unlit shader writes the
+  colour unchanged into an RGBA8 target with no multisampling, so the decoded IDs are exact:
+  like Cycles' Object Index pass, there is no edge blending, and a test checks that no decoded
+  value is anything but 0 or a real instance ID. IDs are written to `aux.exr` as `IndexOB`, and
+  masks and boxes come from them exactly as for Cycles. On the M4 cube fixture both engines give
+  box `[271, 191, 98, 98]` and area 9604 px. On 12 bundled-config scenes (seed 2026) the label
+  maps built from the two datasets' COCO masks differ on 12 pixels in total, at most 4 in one
+  image (0.035 % of an image's labelled pixels at worst), all on silhouette edges.
+- **Depth.** Needs `strata_read_depth_f32` (Strata ABI 1.9, proposed in RFC 0026). It is used
+  when the loaded library has it; with Strata 0.4.0 (ABI 1.8) the `Depth` channel is `+inf`
+  (no hit), so `depth.png` is all zeros, `render.json` and the manifest record `"depth": false`,
+  and the depth assertions in the tests are skipped. Per-pixel `strata_raycast_meshes` was
+  measured at about 12 s per image in the RFC spike and is not used.
+- **Lighting and colour.** Sphere lights become shadowed point lights (up to 4 cast shadows);
+  each gets range `3 × d` and the intensity that matches Cycles' diffuse response at its
+  distance `d` to the instances' centre, times an exposure of 0.03 fitted against Cycles renders
+  of the same 8 scenes (mean absolute difference 17 of 255 levels). The dome intensity becomes
+  Strata's flat ambient (`STRATA_LIGHTING_SPACE`). The linear readback is sRGB-encoded on the
+  host. Roughness, metallic, the dome colour and HDRI, and light radius (soft shadows) have no
+  effect; each scene's `render.json` lists what was ignored under `ignored`, the manifest
+  carries the first scene's list, and the CLI warns once per process.
+- **Determinism.** Rasterization draws no random samples: `reproduce` on a Strata dataset gives
+  a mean absolute RGB difference of 0.0 (tested). The manifest records `strata`, `strata_abi` and
+  the GL driver (`gl`, e.g. `llvmpipe (LLVM 12.0.0, 256 bits) | 4.5 (Core Profile) Mesa
+  21.2.6`), since a different Mesa build can rasterize differently.
+- **Throughput fields.** `blender_start` is the one-off engine creation (about 0.07 s per
+  process, then 0); `import` is reading the stage; `render` is both frames and their readbacks.
 
 ## Kubernetes job topology
 
@@ -408,6 +465,20 @@ Intel Core i9-10850K, 10 cores / 20 threads, shared with other workloads; 12 ima
 | 1 process, 4 Blender threads | 306.9 | 11.3 s / 12.7 s | generate 0.11 s, Blender start 0.09 s, import 0.07 s, label 0.07 s, write 0.09 s |
 | `--workers 2`, 4 threads each | 475.4 (237.7 + 241.4 per shard) | 14.5 s / 19.0 s | all under 0.15 s |
 
+**Measured with the Strata backend** (2026-10-23, same machine; it was heavily loaded by other
+work, load average 35–45 on 20 threads, so both rows are slower than the idle M6 run above and
+only their ratio is comparable). `usd-synth generate --seed 2026 --threads 4`, one process,
+640×480:
+
+| Engine | images | images/hour | render mean / p95 per image | other stages (mean) |
+|---|---|---|---|---|
+| Cycles (`configs/tabletop.yaml`, 64 samples, denoised) | 12 | 112.3 | 30.0 s / 64.2 s | generate 0.36 s, Blender start 0.21 s, import 0.23 s, label 0.15 s, write 1.02 s |
+| Strata 0.4.0 (`configs/tabletop-strata.yaml`, llvmpipe, no depth readback) | 200 | 2,711.7 | 0.44 s / 0.77 s | generate 0.47 s, Strata start 0.00 s, import 0.09 s, label 0.12 s, write 0.13 s |
+
+The render step is about 68× faster and the end-to-end rate about 24×. With Strata, rendering is
+no longer the dominant stage: scene generation is now as large, so the next lever is the
+generator, not the renderer.
+
 Rendering is over 97 % of the time per image; Blender start-up is about 0.1 s per scene even
 with a batch of 8, so the batch size mainly trades retry granularity against process count
 (answering open question 5 for CPU rendering at this size).
@@ -461,6 +532,13 @@ Versions are the latest available at planning time (October 2026) and are pinned
   (MVP acceptance criterion 6). Runs in CI on CPU.
 - **End-to-end:** `usd-synth generate --count 4` at 160×120 and low samples, then
   `reproduce` on one image.
+- **Strata backend:** `tests/test_strata.py`. Unit tests without Strata (stage translation and
+  camera projection, ID packing, the `aux.exr` contract, config); tests marked `strata` render
+  the cube fixture (criterion 6), check that decoded IDs are exactly the scene's instances, run
+  `generate` and `reproduce` end to end, and check planar depth once the library has the ABI 1.9
+  readback. CI job `render tests (Strata)` downloads the pinned release `.so` and runs them on
+  Mesa llvmpipe; job `render worker image` renders one scene with each engine in the container
+  and compares their label maps.
 - **Storage sinks:** the same resume/merge tests (`tests/test_storage_merge.py`) run against
   the local-filesystem sink and a MinIO bucket (CI job `storage tests (MinIO)`), so both sinks
   honour the same `DONE`-last contract.
@@ -499,6 +577,23 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    ReadWriteMany volume is required. A local-filesystem sink with the same layout stays the
    only sink for M1–M6 (see [Kubernetes job topology](#kubernetes-job-topology)).
 
+5. **Strata as an optional second backend** (accepted 2026-10-23 by the owner, executing
+   Preponderous RFC 0026). `render.engine: strata` sits beside Cycles, which stays the default
+   and is not replaced. The RFC's open questions were settled with these defaults:
+   - **Unsupported config:** render with a warning and record what was ignored (per scene in
+     `render.json`, and in the manifest), rather than rejecting the config.
+   - **Colour:** host-side sRGB encode of the 8-bit linear readback (no Strata change).
+   - **Light calibration:** match Cycles' diffuse response at each light's distance to the
+     scene centre, with one exposure factor fitted against Cycles renders (see
+     [Strata backend](#strata-backend)).
+   - **User assets:** fan triangulation, exact for convex faces; concave n-gons need
+     triangulated assets for now.
+   - **Image:** one worker image carries both engines.
+   - **EEVEE:** not measured.
+   - **World examples:** tabletop only; the examples keep rendering with Cycles.
+   - **Depth:** feature-gated on Strata ABI 1.9 (`strata_read_depth_f32`), so datasets rendered
+     with Strata 0.4.0 have no depth and say so.
+
 ## Open questions
 
 1. **Object Index pass vs Cryptomatte.** Resolved in M3: the Object Index pass is exact, no
@@ -514,4 +609,8 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    for CPU rendering at 640×480 the batch size barely affects throughput; the default of 8
    keeps a failed batch cheap to retry. Memory growth over long batches is not yet measured.
 6. **Second backend.** If a Replicator backend is added later, how much of the label pipeline
-   can be shared, given Replicator has its own annotators?
+   can be shared, given Replicator has its own annotators? (The Strata backend, Decision 5,
+   shares all of it by writing the Blender worker's pass format.)
+7. **Rasterized vs path-traced training data.** Whether a model trained on Strata-rendered
+   images transfers as well as one trained on Cycles images is not measured; this repository does
+   no training.

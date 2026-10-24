@@ -5,6 +5,7 @@ import pytest
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "blender: needs a Blender binary ($USD_SYNTH_BLENDER)")
+    config.addinivalue_line("markers", "strata: needs libstrata.so ($USD_SYNTH_STRATA) and EGL")
 
 
 @pytest.fixture(scope="session")
@@ -17,4 +18,17 @@ def blender():
     except RenderError as err:
         if os.environ.get("USD_SYNTH_REQUIRE_BLENDER") == "1":
             pytest.fail(f"Blender required but unavailable: {err}")
+        pytest.skip(str(err))
+
+
+@pytest.fixture(scope="session")
+def strata():
+    """The Strata library, or a skip. CI sets USD_SYNTH_REQUIRE_STRATA=1 so a skip fails."""
+    from usd_synth.strata import StrataError, find_strata
+
+    try:
+        return find_strata()
+    except StrataError as err:
+        if os.environ.get("USD_SYNTH_REQUIRE_STRATA") == "1":
+            pytest.fail(f"Strata required but unavailable: {err}")
         pytest.skip(str(err))
