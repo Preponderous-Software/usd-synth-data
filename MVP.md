@@ -193,4 +193,4 @@ Decided 2026-10-17 (ARCHITECTURE.md, Decisions). Not tracked as `mvp` issues.
 - **Strata fast tier (added 2026-10-23).** `render.engine: strata` renders the same stages
   rasterized on CPU, about 68× faster per render step (measured under load) with exact masks
   and boxes; Cycles stays the default. Depth comes from Strata's ABI 1.9 depth readback, in
-  Strata 0.5.0, pinned since 2026-10-24 (ARCHITECTURE.md, Strata backend).
+  Strata 0.5.0 and later; 0.6.0 is pinned (ARCHITECTURE.md, Strata backend).

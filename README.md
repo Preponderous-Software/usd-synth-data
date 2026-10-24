@@ -97,7 +97,7 @@ under heavy load: Cycles 30.0 s and Strata 0.44 s per render, 112 vs 2,712 image
 end to end. Rebuild with [`scripts/engine_compare.py`](scripts/engine_compare.py).*
 
 ```bash
-export USD_SYNTH_STRATA=/path/to/libstrata-0.5.0-linux-x64.so   # from the Strata releases page
+export USD_SYNTH_STRATA=/path/to/libstrata-0.6.0-linux-x64.so   # from the Strata releases page
 usd-synth generate --config configs/tabletop-strata.yaml --seed 42 --count 200 --out out/fast
 ```
 
@@ -182,7 +182,7 @@ the state: owners by colour, army size by figure count, plus unlabelled scenery 
 - Python 3.12+
 - OpenUSD (`usd-core`)
 - Blender 5.2 LTS (Cycles), run headless
-- Optional: [Strata](https://github.com/Preponderous-Software/strata) 0.5.0 through its official
+- Optional: [Strata](https://github.com/Preponderous-Software/strata) 0.6.0 through its official
   Python binding (`strata-engine`, ctypes), on Mesa llvmpipe (`render.engine: strata`)
 - NumPy, Pydantic, PyYAML, OpenEXR, Pillow
 - boto3 (any S3-compatible endpoint)
@@ -256,7 +256,7 @@ usd-synth render --config configs/tabletop.yaml --scenes out/scenes --out out/re
 pytest                                            # run the test suite
 ```
 
-Or in the render worker image (Blender 5.2.2 and Strata 0.5.0 included, CPU rendering):
+Or in the render worker image (Blender 5.2.2 and Strata 0.6.0 included, CPU rendering):
 
 ```bash
 docker build -t usd-synth .

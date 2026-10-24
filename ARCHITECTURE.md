@@ -326,12 +326,12 @@ reproduce, the sinks and the Kubernetes manifests are shared.
 - **Library.** The released Linux `.so` (`libstrata-<version>-linux-x64.so`, built on
   `manylinux_2_28`), found as `--strata` > `$USD_SYNTH_STRATA` > `/opt/strata/lib/libstrata.so`
   (the worker image) > the loader path. It is loaded through Strata's official binding
-  (`bindings/python` in the Strata repository, `strata-engine` 0.5.0), which checks the ABI
+  (`bindings/python` in the Strata repository, `strata-engine` 0.6.0), which checks the ABI
   major version and every struct layout against the library at load, so a mismatched library
   fails loudly; `strata.py` additionally requires ABI 1.8 (Strata 0.4.0) or newer. The binding
-  is not on PyPI, so `pyproject.toml` depends on the `v0.5.0` tag's source archive
+  is not on PyPI, so `pyproject.toml` depends on the `v0.6.0` tag's source archive
   (`#subdirectory=bindings/python`; a plain archive URL, so the image needs no git). CI and the
-  image pin the Strata 0.5.0 library by SHA-256 from the release's `SHA256SUMS`.
+  image pin the Strata 0.6.0 library by SHA-256 from the release's `SHA256SUMS`.
 - **Headless.** `STRATA_SURFACE_HEADLESS` (EGL surfaceless) on Mesa llvmpipe:
   `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe` are set if unset, and `--threads`
   (the pod CPU limit on Kubernetes) becomes `LP_NUM_THREADS`. `render.device: gpu` with
@@ -358,7 +358,7 @@ reproduce, the sinks and the Kubernetes manifests are shared.
   drawn, straight into the `Depth` channel; `render.json` and the manifest record
   `"depth": true`. With an older library (Strata 0.4.0, ABI 1.8) the channel is `+inf`
   (no hit), so `depth.png` is all zeros and `"depth": false`; the depth tests skip locally on
-  such a library and fail in CI, which pins 0.5.0. Per-pixel `strata_raycast_meshes` was
+  such a library and fail in CI, which pins 0.6.0. Per-pixel `strata_raycast_meshes` was
   measured at about 12 s per image in the RFC spike and is not used.
 - **Lighting and colour.** Sphere lights become shadowed point lights (up to 4 cast shadows);
   each gets range `3 × d` and the intensity that matches Cycles' diffuse response at its
@@ -610,7 +610,7 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    - **EEVEE:** not measured.
    - **World examples:** tabletop only; the examples keep rendering with Cycles.
    - **Depth:** feature-gated on Strata ABI 1.9 (`strata_read_depth_f32`), so datasets rendered
-     with Strata 0.4.0 have no depth and say so. Strata 0.5.0 (pinned since 2026-10-24) has it.
+     with Strata 0.4.0 have no depth and say so. Strata 0.5.0 (pinned 2026-10-24) has it, as does 0.6.0 (pinned since the same day).
 
 ## Open questions
 
