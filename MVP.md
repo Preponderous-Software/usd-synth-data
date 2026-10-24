@@ -66,7 +66,9 @@ local `kind` cluster.
   scenarios can be added without changing the other stages.
 - Physics-settled object piles (planned directly after the MVP; see
   [Post-MVP roadmap](#post-mvp-roadmap)).
-- Alternative render backends (Omniverse Replicator, Blender EEVEE, others).
+- Alternative render backends (Omniverse Replicator, Blender EEVEE, others). Since the MVP, an
+  optional Strata backend exists (`render.engine: strata`; ARCHITECTURE.md, Decision 5); the
+  others remain out of scope.
 - Other label types: 6-DoF object poses, keypoints, surface normals, optical flow, amodal masks.
 - Other output formats (BOP, KITTI, YOLO txt); converters can come later.
 - Camera intrinsics/lens distortion models beyond a pinhole camera.
@@ -188,3 +190,7 @@ Decided 2026-10-17 (ARCHITECTURE.md, Decisions). Not tracked as `mvp` issues.
   noticeably more render time per image than tabletop (larger scenes, far more geometry);
   the throughput report will measure by how much.
 - **Indoor rooms (later idea).** Walls, floor and furniture placement; not scheduled.
+- **Strata fast tier (added 2026-10-23).** `render.engine: strata` renders the same stages
+  rasterized on CPU, about 68× faster per render step (measured under load) with exact masks
+  and boxes; Cycles stays the default. Depth needs Strata's ABI 1.9 depth readback
+  (ARCHITECTURE.md, Strata backend).

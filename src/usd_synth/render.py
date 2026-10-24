@@ -1,4 +1,9 @@
-"""Host side of rendering: describe a batch of scenes as JSON and run the Blender worker on it."""
+"""Host side of rendering: describe a batch of scenes and render it with the configured engine.
+
+``render.engine: cycles`` (the default) writes a JSON job and runs the Blender worker on it;
+``render.engine: strata`` renders in this process with :mod:`usd_synth.strata_backend`. Both
+write the same per-scene files, so labelling does not know which engine ran.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +35,18 @@ def find_blender(explicit: str | None = None) -> str:
             "Blender not found: pass --blender, set USD_SYNTH_BLENDER, or put blender on PATH"
         )
     return str(candidate)
+
+
+def find_renderer(cfg: Config, blender: str | None = None, strata: str | None = None) -> str:
+    """The renderer for ``cfg.render.engine``: the Blender binary, or the Strata library."""
+    if cfg.render.engine == "strata":
+        from .strata import StrataError, find_strata
+
+        try:
+            return find_strata(strata)
+        except StrataError as err:
+            raise RenderError(str(err)) from None
+    return find_blender(blender)
 
 
 def scene_spec(usd_path: Path | str, out_dir: Path | str) -> dict:
@@ -74,7 +91,15 @@ class BatchResult:
 def render_batch(
     cfg: Config, specs: list[dict], blender: str, threads: int | None = None, timeout: float = 3600
 ) -> BatchResult:
-    """Render ``specs`` in one Blender process; raises RenderError if any scene failed."""
+    """Render ``specs`` in one Blender process; raises RenderError if any scene failed.
+
+    ``blender`` is the renderer :func:`find_renderer` returned: with ``render.engine: strata``
+    it is the Strata library, and the batch is rendered in this process instead.
+    """
+    if cfg.render.engine == "strata":
+        from .strata_backend import render_batch_strata
+
+        return render_batch_strata(cfg, specs, blender, threads=threads)
     job = {
         "device": cfg.render.device,
         "samples": cfg.render.samples,

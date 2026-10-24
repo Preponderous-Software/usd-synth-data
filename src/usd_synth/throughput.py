@@ -44,6 +44,7 @@ def summarize(scenes: list[dict], cfg_resolved: dict) -> dict:
             }
         )
     env = scenes[0]["render"]
+    cycles = cfg_resolved["render"].get("engine", "cycles") == "cycles"
     return {
         "images": len(scenes),
         "wall_seconds": round(wall, 3),
@@ -51,13 +52,16 @@ def summarize(scenes: list[dict], cfg_resolved: dict) -> dict:
         "stages": stages,
         "shards": shards,
         "environment": {
+            "engine": env.get("engine", cfg_resolved["render"].get("engine", "cycles")),
             "blender": env.get("blender"),
+            "strata": env.get("strata"),
+            "gl": env.get("gl"),
             "device": env.get("device"),
             "threads": env.get("threads"),
             "cpu_model": env.get("cpu_model"),
             "gpu": None if env.get("device") == "cpu" else env.get("device"),
-            "samples": cfg_resolved["render"]["samples"],
-            "denoise": cfg_resolved["render"]["denoise"],
+            "samples": cycles and cfg_resolved["render"]["samples"] or None,
+            "denoise": cfg_resolved["render"]["denoise"] if cycles else None,
             "resolution": [cfg_resolved["image"]["width"], cfg_resolved["image"]["height"]],
             "shard_count": len(shards),
             "hosts": sorted({s["render"].get("host") for s in scenes} - {None}),
@@ -70,6 +74,10 @@ def summary_line(t: dict) -> str:
     return (
         f"{t['images']} images in {t['wall_seconds']:.1f} s -> {t['images_per_hour']:.1f} "
         f"images/hour ({len(t['shards'])} shard(s); render mean {st['render']['mean_s']:.2f} s, "
-        f"p95 {st['render']['p95_s']:.2f} s; blender start mean "
+        f"p95 {st['render']['p95_s']:.2f} s; {_starter(t)} start mean "
         f"{st['blender_start']['mean_s']:.2f} s)"
     )
+
+
+def _starter(t: dict) -> str:
+    return "strata" if t.get("environment", {}).get("engine") == "strata" else "blender"

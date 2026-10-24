@@ -172,7 +172,11 @@ def _finish_scene(cfg, sink, shard, i, scratch, info, gen_s, blender_start_s, st
         "label": label_s,
         "write": write_s + info["timings"]["write"],
     }
-    render_meta = {k: info[k] for k in ("blender", "device", "threads", "samples", "seed")}
+    render_meta = {k: info.get(k) for k in ("blender", "device", "threads", "samples", "seed")}
+    render_meta["engine"] = info.get("engine", "cycles")
+    if render_meta["engine"] == "strata":
+        render_meta.update({k: info.get(k) for k in ("strata", "strata_abi", "gl", "depth")})
+        render_meta["ignored"] = info.get("ignored", [])
     render_meta.update(cpu_model=cpu_model(), host=socket.gethostname())
     meta = {"timings": timings, "render": render_meta, "started": started, "finished": time.time()}
     sink.put_bytes(prefix + "timings.json", json.dumps(meta, sort_keys=True).encode())

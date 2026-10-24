@@ -79,10 +79,16 @@ def build_manifest(
         "config_hash": cfg.config_hash(),
         "config_dir": config_dir,
         "dataset_seed": dataset_seed,
+        "engine": render_info.get("engine", cfg.render.engine),
         "blender": render_info.get("blender"),
+        **(
+            {k: render_info.get(k) for k in ("strata", "strata_abi", "gl", "depth", "ignored")}
+            if cfg.render.engine == "strata"
+            else {}
+        ),
         "device": render_info.get("device"),
-        "samples": cfg.render.samples,
-        "denoise": cfg.render.denoise,
+        "samples": cfg.render.samples if cfg.render.engine == "cycles" else None,
+        "denoise": cfg.render.denoise if cfg.render.engine == "cycles" else None,
         "resolution": [cfg.image.width, cfg.image.height],
         "images": [
             {
