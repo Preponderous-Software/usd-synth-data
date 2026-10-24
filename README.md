@@ -97,14 +97,22 @@ under heavy load: Cycles 30.0 s and Strata 0.44 s per render, 112 vs 2,712 image
 end to end. Rebuild with [`scripts/engine_compare.py`](scripts/engine_compare.py).*
 
 ```bash
-export USD_SYNTH_STRATA=/path/to/libstrata-0.4.0-linux-x64.so   # from the Strata releases page
+export USD_SYNTH_STRATA=/path/to/libstrata-0.5.0-linux-x64.so   # from the Strata releases page
 usd-synth generate --config configs/tabletop-strata.yaml --seed 42 --count 200 --out out/fast
 ```
 
 It needs Mesa's EGL and llvmpipe (`apt install libegl1 libgl1-mesa-dri`); the worker image
-already has both and the library. Depth needs the depth readback of Strata ABI 1.9: with Strata
-0.4.0 the depth PNGs are empty and the manifest says `"depth": false`. Each scene records what
-the rasterizer ignored. Details: [ARCHITECTURE.md, Strata backend](ARCHITECTURE.md#strata-backend).
+already has both and the library. Depth comes from Strata's depth readback (ABI 1.9, Strata
+0.5.0+); with Strata 0.4.0 the depth PNGs are empty and the manifest says `"depth": false`. Each
+scene records what the rasterizer ignored. Strata is driven through its official Python
+binding (`strata-engine`, installed with the package from the pinned Strata tag).
+
+![Strata contact sheet: six scenes rendered with Strata 0.5.0, with boxes, instance masks and the planar depth map from the depth readback](docs/images/strata-contact-sheet.png)
+
+*Six of 200 scenes (`--seed 2026`, 640×480) rendered with Strata 0.5.0 on llvmpipe, with the
+boxes, masks and depth PNGs `usd-synth generate` wrote (0.12 s per render, 8,195 images/hour
+end to end on a lighter-loaded machine than the comparison above). Rebuild with
+[`scripts/contact_sheet.py`](scripts/contact_sheet.py).* Details: [ARCHITECTURE.md, Strata backend](ARCHITECTURE.md#strata-backend).
 
 ---
 
@@ -174,8 +182,8 @@ the state: owners by colour, army size by figure count, plus unlabelled scenery 
 - Python 3.12+
 - OpenUSD (`usd-core`)
 - Blender 5.2 LTS (Cycles), run headless
-- Optional: [Strata](https://github.com/Preponderous-Software/strata) 0.4.0 through `ctypes`,
-  on Mesa llvmpipe (`render.engine: strata`)
+- Optional: [Strata](https://github.com/Preponderous-Software/strata) 0.5.0 through its official
+  Python binding (`strata-engine`, ctypes), on Mesa llvmpipe (`render.engine: strata`)
 - NumPy, Pydantic, PyYAML, OpenEXR, Pillow
 - boto3 (any S3-compatible endpoint)
 - pycocotools
@@ -248,7 +256,7 @@ usd-synth render --config configs/tabletop.yaml --scenes out/scenes --out out/re
 pytest                                            # run the test suite
 ```
 
-Or in the render worker image (Blender 5.2.2 and Strata 0.4.0 included, CPU rendering):
+Or in the render worker image (Blender 5.2.2 and Strata 0.5.0 included, CPU rendering):
 
 ```bash
 docker build -t usd-synth .

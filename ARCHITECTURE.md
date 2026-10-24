@@ -317,16 +317,21 @@ face depth 0.900 m. `tests/test_labels_render.py` asserts the MVP bounds (2 px, 
 
 `render.engine: strata` is an optional fast tier beside Cycles, designed in Preponderous
 RFC 0026 and accepted by the owner on 2026-10-23 (Decision 5). Cycles remains the default and
-nothing about it changed. The backend lives in `strata_backend.py`, with a ctypes binding to
-Strata's versioned C ABI in `strata.py`, and runs in the host process: there is no subprocess and
+nothing about it changed. The backend lives in `strata_backend.py`, with `strata.py` adapting
+Strata's official Python binding (`strata-engine`, ctypes over the versioned C ABI) to NumPy, and
+runs in the host process: there is no subprocess and
 no Blender. It writes the same per-scene files as the Blender worker, so the label stage, merge,
 reproduce, the sinks and the Kubernetes manifests are shared.
 
 - **Library.** The released Linux `.so` (`libstrata-<version>-linux-x64.so`, built on
   `manylinux_2_28`), found as `--strata` > `$USD_SYNTH_STRATA` > `/opt/strata/lib/libstrata.so`
-  (the worker image) > the loader path. The binding requires ABI 1.8 (Strata 0.4.0) and checks
-  every struct it uses against `strata_struct_size()` at load, so a mismatched library fails
-  loudly. CI and the image pin Strata 0.4.0 by SHA-256 from the release's `SHA256SUMS`.
+  (the worker image) > the loader path. It is loaded through Strata's official binding
+  (`bindings/python` in the Strata repository, `strata-engine` 0.5.0), which checks the ABI
+  major version and every struct layout against the library at load, so a mismatched library
+  fails loudly; `strata.py` additionally requires ABI 1.8 (Strata 0.4.0) or newer. The binding
+  is not on PyPI, so `pyproject.toml` depends on the `v0.5.0` tag's source archive
+  (`#subdirectory=bindings/python`; a plain archive URL, so the image needs no git). CI and the
+  image pin the Strata 0.5.0 library by SHA-256 from the release's `SHA256SUMS`.
 - **Headless.** `STRATA_SURFACE_HEADLESS` (EGL surfaceless) on Mesa llvmpipe:
   `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe` are set if unset, and `--threads`
   (the pod CPU limit on Kubernetes) becomes `LP_NUM_THREADS`. `render.device: gpu` with
@@ -348,10 +353,12 @@ reproduce, the sinks and the Kubernetes manifests are shared.
   box `[271, 191, 98, 98]` and area 9604 px. On 12 bundled-config scenes (seed 2026) the label
   maps built from the two datasets' COCO masks differ on 12 pixels in total, at most 4 in one
   image (0.035 % of an image's labelled pixels at worst), all on silhouette edges.
-- **Depth.** Needs `strata_read_depth_f32` (Strata ABI 1.9, proposed in RFC 0026). It is used
-  when the loaded library has it; with Strata 0.4.0 (ABI 1.8) the `Depth` channel is `+inf`
-  (no hit), so `depth.png` is all zeros, `render.json` and the manifest record `"depth": false`,
-  and the depth assertions in the tests are skipped. Per-pixel `strata_raycast_meshes` was
+- **Depth.** `strata_read_depth_f32` (Strata ABI 1.9, proposed in RFC 0026, released in Strata
+  0.5.0) reads the planar view distance per pixel after the ID frame, `+inf` where nothing was
+  drawn, straight into the `Depth` channel; `render.json` and the manifest record
+  `"depth": true`. With an older library (Strata 0.4.0, ABI 1.8) the channel is `+inf`
+  (no hit), so `depth.png` is all zeros and `"depth": false`; the depth tests skip locally on
+  such a library and fail in CI, which pins 0.5.0. Per-pixel `strata_raycast_meshes` was
   measured at about 12 s per image in the RFC spike and is not used.
 - **Lighting and colour.** Sphere lights become shadowed point lights (up to 4 cast shadows);
   each gets range `3 × d` and the intensity that matches Cycles' diffuse response at its
@@ -475,6 +482,17 @@ only their ratio is comparable). `usd-synth generate --seed 2026 --threads 4`, o
 | Cycles (`configs/tabletop.yaml`, 64 samples, denoised) | 12 | 112.3 | 30.0 s / 64.2 s | generate 0.36 s, Blender start 0.21 s, import 0.23 s, label 0.15 s, write 1.02 s |
 | Strata 0.4.0 (`configs/tabletop-strata.yaml`, llvmpipe, no depth readback) | 200 | 2,711.7 | 0.44 s / 0.77 s | generate 0.47 s, Strata start 0.00 s, import 0.09 s, label 0.12 s, write 0.13 s |
 
+**Strata 0.5.0, with depth** (2026-10-24, same machine and command, load average 17–24, so
+lighter than the rows above and not comparable with them in absolute terms):
+
+| Engine | images | images/hour | render mean / p95 per image | other stages (mean) |
+|---|---|---|---|---|
+| Strata 0.5.0 (`configs/tabletop-strata.yaml`, llvmpipe, depth readback on) | 200 | 8,195.3 | 0.12 s / 0.18 s | generate 0.17 s, Strata start 0.00 s, import 0.03 s, label 0.05 s, write 0.06 s |
+
+The depth readback adds one readback of a float target per image; its share was not measured
+separately. Contact sheet of this run (RGB, boxes, masks, depth):
+[`docs/images/strata-contact-sheet.png`](docs/images/strata-contact-sheet.png).
+
 The render step is about 68× faster and the end-to-end rate about 24×. With Strata, rendering is
 no longer the dominant stage: scene generation is now as large, so the next lever is the
 generator, not the renderer.
@@ -535,8 +553,8 @@ Versions are the latest available at planning time (October 2026) and are pinned
 - **Strata backend:** `tests/test_strata.py`. Unit tests without Strata (stage translation and
   camera projection, ID packing, the `aux.exr` contract, config); tests marked `strata` render
   the cube fixture (criterion 6), check that decoded IDs are exactly the scene's instances, run
-  `generate` and `reproduce` end to end, and check planar depth once the library has the ABI 1.9
-  readback. CI job `render tests (Strata)` downloads the pinned release `.so` and runs them on
+  `generate` and `reproduce` end to end, and check planar depth through the ABI 1.9 readback
+  (required in CI). CI job `render tests (Strata)` downloads the pinned release `.so` and runs them on
   Mesa llvmpipe; job `render worker image` renders one scene with each engine in the container
   and compares their label maps.
 - **Storage sinks:** the same resume/merge tests (`tests/test_storage_merge.py`) run against
@@ -592,7 +610,7 @@ Recorded 2026-10-17. Each entry was previously an open question or an unstated a
    - **EEVEE:** not measured.
    - **World examples:** tabletop only; the examples keep rendering with Cycles.
    - **Depth:** feature-gated on Strata ABI 1.9 (`strata_read_depth_f32`), so datasets rendered
-     with Strata 0.4.0 have no depth and say so.
+     with Strata 0.4.0 have no depth and say so. Strata 0.5.0 (pinned since 2026-10-24) has it.
 
 ## Open questions
 
