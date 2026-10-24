@@ -16,7 +16,7 @@ from usd_synth.reproduce import RGB_MAD_THRESHOLD, reproduce
 SMALL = Path(__file__).resolve().parent / "data" / "small.yaml"
 INDEX = 2
 USDA = b"#usda 1.0\n"
-RGB = np.full((6, 8, 3), 100, dtype=np.uint8)
+RGB = np.full((12, 16, 3), 100, dtype=np.uint8)
 
 
 def ann(ann_id, image_id, bbox=(1.0, 2.0, 3.0, 4.0)):
