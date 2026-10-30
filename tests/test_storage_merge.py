@@ -10,7 +10,7 @@ import pytest
 from sink_contract import fake_scene, fake_shard
 
 from usd_synth.config import load_config
-from usd_synth.merge import MergeError, merge
+from usd_synth.merge import MergeError, MergeNotReady, merge
 from usd_synth.s3 import S3Sink
 from usd_synth.storage import LocalSink, open_sink
 
@@ -193,6 +193,99 @@ def test_merge_rejects_shards_of_different_runs(make_sink, cfg):
 def test_merge_with_no_shards(make_sink):
     with pytest.raises(MergeError, match="no shards"):
         merge(make_sink())
+
+
+def _missing_shard(sink, cfg):
+    fake_shard(sink, cfg, 0, 2, 0, 3, 6)  # shard 1 has not written shard.json yet
+
+
+def _unfinished_scene(sink, cfg):
+    fake_shard(sink, cfg, 0, 1, 0, 2, 2)
+    fake_scene(sink, 0, 0)
+    fake_scene(sink, 0, 1, done=False)
+
+
+def _overlapping_shards(sink, cfg):
+    fake_shard(sink, cfg, 0, 2, 0, 4, 6)
+    fake_shard(sink, cfg, 1, 2, 3, 6, 6)
+
+
+def _mixed_runs(sink, cfg):
+    fake_shard(sink, cfg, 0, 2, 0, 3, 6, seed=1)
+    fake_shard(sink, cfg, 1, 2, 3, 6, 6, seed=2)
+
+
+def _scenes_outside_the_run(sink, cfg):
+    fake_shard(sink, cfg, 0, 1, 0, 8, 6)
+
+
+def _tampered_config_hash(sink, cfg):
+    fake_shard(sink, cfg, 0, 1, 0, 1, 1)
+    key = "shards/0/shard.json"
+    info = json.loads(sink.get_bytes(key))
+    info["config_hash"] = "0" * len(info["config_hash"])
+    sink.put_bytes(key, json.dumps(info).encode())
+
+
+@pytest.mark.parametrize(
+    "build, match",
+    [
+        (lambda sink, cfg: None, "no shards found"),
+        (_missing_shard, r"missing 3 scene\(s\): 3-5"),
+        (_unfinished_scene, r"1 scene\(s\) not complete: 1"),
+    ],
+    ids=["no-shards", "missing-shard", "unfinished-scene"],
+)
+def test_merge_reports_shards_that_may_still_finish_as_not_ready(make_sink, cfg, build, match):
+    """``merge --wait`` retries on MergeNotReady: a shard that has not started or finished."""
+    sink = make_sink()
+    build(sink, cfg)
+    with pytest.raises(MergeNotReady, match=match):
+        merge(sink)
+
+
+@pytest.mark.parametrize(
+    "build, match",
+    [
+        (_overlapping_shards, r"shards 0 \[0, 4\) and 1 \[3, 6\) overlap"),
+        (_mixed_runs, "dataset_seed=2 but shard 0 has 1; they are not one run"),
+        (_scenes_outside_the_run, "shards cover scenes outside the run: 6-7"),
+        (_tampered_config_hash, "shard config does not match its recorded hash"),
+    ],
+    ids=["overlap", "mixed-runs", "outside-the-run", "tampered-hash"],
+)
+def test_merge_fails_at_once_on_shards_that_can_never_merge(make_sink, cfg, build, match):
+    """Waiting cannot fix these, so they are plain MergeErrors that ``merge --wait`` raises."""
+    sink = make_sink()
+    build(sink, cfg)
+    with pytest.raises(MergeError, match=match) as err:
+        merge(sink)
+    assert not isinstance(err.value, MergeNotReady)
+
+
+def test_merge_lists_missing_scenes_as_compact_ranges(make_sink, cfg):
+    sink = make_sink()
+    for k in (0, 2, 5):  # shards 1, 3 and 4 of 6 (one scene each) never ran
+        fake_shard(sink, cfg, k, 6, k, k + 1, 6)
+    with pytest.raises(MergeNotReady, match=r"missing 3 scene\(s\): 1, 3-4$"):
+        merge(sink)
+
+
+def test_merge_accepts_an_empty_trailing_shard(make_sink, cfg):
+    sink = make_sink()
+    for k in range(4):  # 3 scenes over 4 shards: shard 3 owns [3, 3)
+        start, stop = min(k, 3), min(k + 1, 3)
+        fake_shard(sink, cfg, k, 4, start, stop, 3)
+    for i in range(3):
+        fake_scene(sink, i, i)
+    merged = merge(sink)
+    assert len(merged["coco"]["images"]) == 3
+    assert merged["manifest"]["shards"][-1] == {
+        "shard_index": 3,
+        "shard_count": 4,
+        "start": 3,
+        "stop": 3,
+    }
 
 
 def test_merge_writes_throughput_with_cluster_and_per_shard_figures(make_sink, cfg):
