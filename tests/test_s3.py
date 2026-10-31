@@ -2,6 +2,7 @@
 classification, listing across pages, and how the boto3 client is configured from the
 environment. The sink contract itself runs against MinIO in ``test_storage_merge.py``."""
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError
 
@@ -133,6 +134,10 @@ def test_list_of_an_empty_prefix_returns_nothing():
 
 @pytest.fixture
 def aws_env(monkeypatch):
+    # boto3.client() goes through a module-level default session that caches the first
+    # credentials it resolves; give each test its own so the dummy keys below do not leak
+    # into later tests that talk to a real endpoint.
+    monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
     for name in ("AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", "AWS_DEFAULT_REGION"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
