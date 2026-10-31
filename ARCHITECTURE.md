@@ -561,7 +561,9 @@ Versions are the latest available at planning time (October 2026) and are pinned
   and compares their label maps.
 - **Storage sinks:** the same resume/merge tests (`tests/test_storage_merge.py`) run against
   the local-filesystem sink and a MinIO bucket (CI job `storage tests (MinIO)`), so both sinks
-  honour the same `DONE`-last contract.
+  honour the same `DONE`-last contract. `tests/test_s3.py` covers the S3 sink without an
+  endpoint (key prefixing, which `head_object` errors count as "missing", paginated listing,
+  and the client's endpoint/region/addressing settings) against a recording fake client.
 - **Cluster:** `scripts/kind-e2e.sh` (CI job `kind e2e`; runs locally with docker, kind and
   kubectl, and touches only the `kind-usd-synth-e2e` context it creates) deploys MinIO in the
   cluster, runs a 4-shard Indexed Job writing to it, deletes one pod mid-run, and compares the
