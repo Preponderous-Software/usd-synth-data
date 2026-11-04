@@ -543,7 +543,9 @@ Versions are the latest available at planning time (October 2026) and are pinned
   independence; placement sampler (non-overlap, on-surface); USD writer output opened with
   `pxr` and checked structurally; label code on synthetic NumPy arrays (masks, boxes, RLE
   round-trip, visibility filtering); COCO writer validated with `pycocotools`; merge logic on
-  fake shard directories; CLI argument checks and error messages (`tests/test_cli.py`).
+  fake shard directories; CLI argument checks and error messages (`tests/test_cli.py`); the host
+  side of rendering, with a fake `subprocess.run` (`tests/test_render_host.py`: finding the
+  renderer, the job, how worker events become a result or an error).
 - **Golden files:** a handful of small `.usda` scenes checked in; any change to generation
   output fails the test and must be accepted explicitly, which protects reproducibility of
   existing datasets.
