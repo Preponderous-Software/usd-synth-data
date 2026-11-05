@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 from . import __version__
@@ -12,7 +13,7 @@ from .render import RenderError
 from .seeds import check_seed
 
 
-def _check_min(flag: str, value: float | None, minimum: int) -> None:
+def _check_min(flag: str, value: int | None, minimum: int) -> None:
     """Reject a numeric flag below ``minimum``; an unset flag (None) passes."""
     if value is not None and value < minimum:
         raise ValueError(f"{flag} must be >= {minimum}")
@@ -172,9 +173,10 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     from .merge import MergeNotReady, merge
     from .storage import open_sink
 
-    _check_min("--wait", args.wait, 0)
-    if args.poll <= 0:
-        raise ValueError("--poll must be > 0")
+    if not (math.isfinite(args.wait) and args.wait >= 0):  # nan would never reach the deadline
+        raise ValueError("--wait must be a finite number >= 0")
+    if not (math.isfinite(args.poll) and args.poll > 0):
+        raise ValueError("--poll must be a finite number > 0")
     sink = open_sink(args.out)
     deadline = time.monotonic() + (args.wait or 0)
     while True:
