@@ -58,6 +58,12 @@ def render_manifests(
         raise ValueError(f"--name {name!r} must be a lowercase DNS-1123 label of <= 42 chars")
     if count < 1 or shards < 1 or shards > count:
         raise ValueError("need count >= 1 and 1 <= shards <= count")
+    if parallelism is not None and parallelism < 1:
+        raise ValueError("--parallelism must be >= 1")
+    if cpu is not None and cpu < 1:
+        raise ValueError("--cpu must be >= 1")
+    if backoff_limit_per_index < 0:
+        raise ValueError("--backoff-limit-per-index must be >= 0")
     parallelism = parallelism or shards
     cpu = cpu or cfg.render.threads or 2
     labels = {"app.kubernetes.io/name": "usd-synth", "app.kubernetes.io/instance": name}

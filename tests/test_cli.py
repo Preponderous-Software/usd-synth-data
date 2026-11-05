@@ -23,6 +23,9 @@ def _generate(out, *extra):
     "extra, message",
     [(["--count", "0"], "--count must be >= 1"),
      (["--workers", "0"], "--workers must be >= 1"),
+     (["--batch-size", "0"], "--batch-size must be >= 1"),
+     (["--batch-size", "-1"], "--batch-size must be >= 1"),
+     (["--threads", "-1"], "--threads must be >= 0"),
      (["--shard-index", "1"], "--shard-index and --shard-count must be given together"),
      (["--shard-count", "4"], "--shard-index and --shard-count must be given together"),
      (["--seed", "-1"], "dataset seed must be in [0, 2**63 - 1] (got -1)")],
@@ -38,14 +41,48 @@ def test_generate_rejects_bad_arguments_before_writing(
     assert not out.exists()
 
 
-def test_render_with_no_scenes_is_a_clean_error(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("count", ["0", "-1"])
+def test_scenes_rejects_a_count_below_one(tmp_path, capsys, count):
+    out = tmp_path / "out"
+    rc = main(["scenes", "--config", str(SMALL), "--seed", "1", "--count", count,
+               "--out", str(out)])  # fmt: skip
+    assert rc == 1
+    assert capsys.readouterr().err == "usd-synth: --count must be >= 1\n"
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("threads", [(), ("--threads", "0")])  # 0 = let the renderer decide
+def test_render_with_no_scenes_is_a_clean_error(tmp_path, monkeypatch, capsys, threads):
     monkeypatch.setattr("usd_synth.render.find_blender", lambda explicit=None: pytest.fail())
     empty = tmp_path / "scenes"
     empty.mkdir()
     rc = main(["render", "--config", str(SMALL), "--scenes", str(empty),
-               "--out", str(tmp_path / "out")])  # fmt: skip
+               "--out", str(tmp_path / "out"), *threads])  # fmt: skip
     assert rc == 1
     assert capsys.readouterr().err == f"usd-synth render: no .usda files in {empty}\n"
+
+
+def test_render_rejects_negative_threads(tmp_path, capsys):
+    rc = main(["render", "--config", str(SMALL), "--scenes", str(tmp_path),
+               "--out", str(tmp_path / "out"), "--threads", "-1"])  # fmt: skip
+    assert rc == 1
+    assert capsys.readouterr().err == "usd-synth: --threads must be >= 0\n"
+
+
+@pytest.mark.parametrize(
+    "extra, message",
+    [(["--poll", "0"], "--poll must be a finite number > 0"),
+     (["--poll", "-1"], "--poll must be a finite number > 0"),
+     (["--poll", "nan"], "--poll must be a finite number > 0"),
+     (["--poll", "inf"], "--poll must be a finite number > 0"),
+     (["--wait", "-1"], "--wait must be a finite number >= 0"),
+     (["--wait", "nan"], "--wait must be a finite number >= 0"),
+     (["--wait", "inf"], "--wait must be a finite number >= 0")],
+)  # fmt: skip
+def test_merge_rejects_bad_timing_flags(tmp_path, monkeypatch, capsys, extra, message):
+    monkeypatch.setattr("time.sleep", lambda s: pytest.fail("should not wait"))
+    assert main(["merge", "--out", str(tmp_path), *extra]) == 1
+    assert capsys.readouterr().err == f"usd-synth: {message}\n"
 
 
 def test_merge_without_wait_fails_at_once(tmp_path, monkeypatch, capsys):
@@ -78,6 +115,13 @@ def test_reproduce_without_manifest_names_the_missing_file(tmp_path, capsys):
                "--out", str(tmp_path / "out")])  # fmt: skip
     assert rc == 1
     assert capsys.readouterr().err == f"usd-synth: file not found: {tmp_path / 'manifest.json'}\n"
+
+
+def test_reproduce_rejects_negative_threads(tmp_path, capsys):
+    rc = main(["reproduce", "--dataset", str(tmp_path), "--image-id", "1",
+               "--out", str(tmp_path / "out"), "--threads", "-1"])  # fmt: skip
+    assert rc == 1
+    assert capsys.readouterr().err == "usd-synth: --threads must be >= 0\n"
 
 
 def test_config_resolved_prints_json_then_hash(capsys):
