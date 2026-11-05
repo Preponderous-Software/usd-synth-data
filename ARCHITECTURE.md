@@ -42,8 +42,8 @@ Per scene *i*, the pipeline writes into `shards/<k>/scenes/<i>/` (`scene.usda`, 
 complete (an empty `DONE` file written last) after every output exists. A re-run of the same
 shard skips completed scenes, so a retried pod resumes rather than starting over; a scene
 without `DONE` is rendered again, overwriting whatever an interrupted attempt uploaded (a resume
-has the same config, so it writes the same set of files). Rendering happens in a scratch directory, so a
-crash never leaves a half-written scene that looks complete. Each shard's `shard.json`
+has the same config, so it writes the same set of files). Rendering happens in a scratch directory,
+so a crash never leaves a half-written scene that looks complete. Each shard's `shard.json`
 records its range, the config (resolved, with hash), seed, count and shard count, and a resume
 with different values is refused. `usd-synth merge` (run automatically by `generate` unless
 `--shard-index` is given) checks that all shards describe one run, that their ranges neither
@@ -57,9 +57,9 @@ Sharding: shard *k* of *n* owns `[k·size, min((k+1)·size, count))` with
 oversubscribe the CPU); `generate --shard-index k --shard-count n` runs one shard and stops, for
 a later `usd-synth merge --out <dir>`. Resume and merge go through the `storage.Sink` interface
 (`put_file`, `put_bytes`, `get_bytes`, `get_file`, `exists`, `list`, `copy`, `describe`,
-`mark_done`, `done_scenes`, `shards`) and rely only on "`DONE` is written last". `LocalSink` is the only sink before M7;
-`tests/test_storage_merge.py` runs the resume/merge contract through the interface so the S3
-sink can be checked by the same tests.
+`mark_done`, `done_scenes`, `shards`) and rely only on "`DONE` is written last". `LocalSink` is
+the only sink before M7; `tests/test_storage_merge.py` runs the resume/merge contract through the
+interface so the S3 sink can be checked by the same tests.
 
 The shard and dataset paths are relative to the output sink, not to a mounted filesystem.
 `--out` is a local directory (`LocalSink`, dataset at the directory root) or
