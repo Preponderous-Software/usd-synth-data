@@ -76,7 +76,11 @@ def test_gpu_request_only_for_gpu_device():
 @pytest.mark.parametrize(
     "kw, match",
     [({"out": "/local/dir"}, "s3://"), ({"name": "Bad_Name"}, "DNS-1123"),
-     ({"shards": 0}, "shards"), ({"shards": 101}, "shards")],
+     ({"shards": 0}, "shards"), ({"shards": 101}, "shards"),
+     ({"parallelism": 0}, "--parallelism must be >= 1"),
+     ({"parallelism": -1}, "--parallelism must be >= 1"),
+     ({"cpu": 0}, "--cpu must be >= 1"), ({"cpu": -1}, "--cpu must be >= 1"),
+     ({"backoff_limit_per_index": -1}, "--backoff-limit-per-index must be >= 0")],
 )  # fmt: skip
 def test_invalid_manifest_arguments(kw, match):
     with pytest.raises(ValueError, match=match):
