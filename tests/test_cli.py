@@ -71,9 +71,13 @@ def test_render_rejects_negative_threads(tmp_path, capsys):
 
 @pytest.mark.parametrize(
     "extra, message",
-    [(["--poll", "0"], "--poll must be > 0"),
-     (["--poll", "-1"], "--poll must be > 0"),
-     (["--wait", "-1"], "--wait must be >= 0")],
+    [(["--poll", "0"], "--poll must be a finite number > 0"),
+     (["--poll", "-1"], "--poll must be a finite number > 0"),
+     (["--poll", "nan"], "--poll must be a finite number > 0"),
+     (["--poll", "inf"], "--poll must be a finite number > 0"),
+     (["--wait", "-1"], "--wait must be a finite number >= 0"),
+     (["--wait", "nan"], "--wait must be a finite number >= 0"),
+     (["--wait", "inf"], "--wait must be a finite number >= 0")],
 )  # fmt: skip
 def test_merge_rejects_bad_timing_flags(tmp_path, monkeypatch, capsys, extra, message):
     monkeypatch.setattr("time.sleep", lambda s: pytest.fail("should not wait"))
