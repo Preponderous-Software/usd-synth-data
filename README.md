@@ -128,6 +128,7 @@ run each: 640×480, 64 samples, denoised, Cycles on 4 CPU threads of a shared de
 | [Minecraft](examples/minecraft/) | a Minecraft-USD-Exporter terrain export | tree, water, ore, sand, stone | 170 |
 | [Roam](examples/roam/) | roam-usd stages of worlds made by Roam's own generator | tree, stone, ore, creature, structure, food | 155 |
 | [Barony](examples/barony/) | game-state JSON from Barony's backend, built into a 3D board here | castle, village, army | 249 |
+| [Heightmap world](examples/heightmap_world/) | a heightmap world package (16-bit height, 8-bit ground class, optional vectors); aerial views of a wide area | water, forest, snow, sand, stone, badland, ice, lava, built, farm | 87 |
 | Beyond Nations | not yet: it has no saves or export, so an exporter has to be written first ([what's needed](examples/README.md#beyond-nations-not-added-yet)) | — | — |
 
 ## 🧱 Example: Training Data from a Minecraft World
@@ -174,6 +175,21 @@ the state: owners by colour, army size by figure count, plus unlabelled scenery 
 
 *Six of 24 views over 12 states from three guest games, rendered at 640×480 with 64 samples on
 4 CPU threads; see [`examples/barony/README.md`](examples/barony/README.md) to reproduce it.*
+
+## 🛩 Example: Aerial Views of a Heightmap World
+
+[`examples/heightmap_world/`](examples/heightmap_world/) works at world scale rather than block
+level. It reads a heightmap world package (`world.json`, a 16-bit `height.png`, an 8-bit
+`ground.png` of ground classes and an optional `vectors.json` of lakes, forests and zones),
+builds a terrain mesh one quad per pixel, and renders drone-style views from 100 to 300 m up.
+Each connected region of a labelled ground class (a lake, a beach, a snowfield, a forest with
+its proxy trees) is one instance. A small synthetic package ships with the example.
+
+![Contact sheet: four aerial views over the bundled synthetic heightmap package, with boxes, semantic masks and depth](docs/images/heightmap-world-contact-sheet.png)
+
+*Four of six views over the bundled sample (a synthetic 1,024-block island at 8 blocks per
+pixel), rendered at 640×480 with 64 samples on 4 CPU threads; see
+[`examples/heightmap_world/README.md`](examples/heightmap_world/README.md) to reproduce it.*
 
 ---
 
