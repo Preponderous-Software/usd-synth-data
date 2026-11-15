@@ -1,0 +1,43 @@
+# Heightmap-world example: which ground classes are labelled, how the terrain looks and how
+# aerial views are randomized. Class names come from the package's world.json.
+width: 640
+height: 480
+samples: 64
+denoise: true
+min_visible_pixels: 30   # instances with fewer visible pixels in a view get no annotation
+stride: 1                # use every n-th raster pixel (1 = all); raise it for very wide worlds
+vertical_scale: 1.0      # terrain height exaggeration
+env_tile_px: 64          # unlabelled ground is split into meshes of this many pixels square
+connectivity: 8          # 4: regions join along pixel edges; 8: also at pixel corners
+
+# Each connected region of one of these classes is one labelled instance (a lake, a forest,
+# a snowfield, a town). Classes not listed (plain) render unlabelled; void is left out.
+labelled: [water, forest, snow, sand, stone, badland, ice, lava, built, farm]
+
+# sRGB display colour per ground class (defaults in hm_scene.DEFAULT_COLORS)
+colors:
+  water: [0.20, 0.38, 0.72]
+  plain: [0.45, 0.62, 0.30]
+  forest: [0.20, 0.42, 0.20]
+
+trees:                   # proxy trees on forest pixels, baked into their forest's mesh
+  enabled: true
+  per_px: 0.5            # mean trees per forest pixel (Poisson)
+  height_m: [6, 12]
+  crown_frac: [0.28, 0.4]  # crown radius / tree height
+  max_trees: 60000
+
+views:
+  margin_px: 4              # cameras and targets stay this many pixels inside the raster
+  altitude_m: [100, 300]    # camera height above its target
+  yaw_deg: [0, 360]         # bearing from camera to target (0 = north)
+  pitch_deg: [-80, -40]     # negative = looking down
+  aim_jitter_m: 20
+  min_clearance_m: 30       # camera height above the terrain under and around it
+  max_range_m: 640          # farthest ground in frame (depth PNGs stop at 655 m)
+  focal_length_mm: [18, 35]
+  sensor_width_mm: 36
+  sun_elevation_deg: [15, 70]
+  sun_azimuth_deg: [0, 360]
+  sun_intensity: [3.5, 6]
+  sky_intensity: [0.8, 1.3]

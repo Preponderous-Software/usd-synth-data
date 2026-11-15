@@ -1,0 +1,30 @@
+{
+ "format": "heightmap-world/1",
+ "grid": {
+  "origin_x": 0,
+  "origin_z": 0,
+  "blocks_per_px": 8,
+  "width": 128,
+  "height": 128,
+  "y_offset": 1024
+ },
+ "classes": [
+  "void",
+  "water",
+  "plain",
+  "forest",
+  "snow",
+  "sand",
+  "stone",
+  "badland",
+  "ice",
+  "lava",
+  "built",
+  "farm"
+ ],
+ "files": {
+  "height": "height.png",
+  "ground": "ground.png",
+  "vectors": "vectors.json"
+ }
+}
