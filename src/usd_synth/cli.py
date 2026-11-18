@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 from . import __version__
 from .config import ConfigError, load_config
 from .render import RenderError
 from .seeds import check_seed
+
+
+def _check_min(flag: str, value: int | None, minimum: int) -> None:
+    """Reject a numeric flag below ``minimum``; an unset flag (None) passes."""
+    if value is not None and value < minimum:
+        raise ValueError(f"{flag} must be >= {minimum}")
 
 
 def _cmd_config(args: argparse.Namespace) -> int:
@@ -27,6 +34,7 @@ def _cmd_scenes(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     check_seed(args.seed)
+    _check_min("--count", args.count, 1)
     config_dir = Path(args.config).resolve().parent
     for index in range(args.start, args.start + args.count):
         path = write_scene(cfg, args.seed, index, args.out, config_dir)
@@ -40,6 +48,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     from .render import find_renderer, render_batch, scene_spec
 
     cfg = load_config(args.config)
+    _check_min("--threads", args.threads, 0)
     src = Path(args.scenes)
     files = sorted(src.glob("*.usda")) if src.is_dir() else [src]
     if not files:
@@ -107,16 +116,16 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     check_seed(args.seed)
-    if args.count < 1:
-        raise ValueError("--count must be >= 1")
+    _check_min("--count", args.count, 1)
     if args.shard_count is not None and args.shard_index is None:
         index = os.environ.get("JOB_COMPLETION_INDEX")  # set by a Kubernetes Indexed Job
         if index is not None:
             args.shard_index = int(index)
     if (args.shard_index is None) != (args.shard_count is None):
         raise ValueError("--shard-index and --shard-count must be given together")
-    if args.workers < 1:
-        raise ValueError("--workers must be >= 1")
+    _check_min("--workers", args.workers, 1)
+    _check_min("--batch-size", args.batch_size, 1)
+    _check_min("--threads", args.threads, 0)
     sink = open_sink(args.out)
     config_dir = Path(args.config).resolve().parent
     blender = find_renderer(cfg, args.blender, args.strata)
@@ -164,6 +173,10 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     from .merge import MergeNotReady, merge
     from .storage import open_sink
 
+    if not (math.isfinite(args.wait) and args.wait >= 0):  # nan would never reach the deadline
+        raise ValueError("--wait must be a finite number >= 0")
+    if not (math.isfinite(args.poll) and args.poll > 0):
+        raise ValueError("--poll must be a finite number > 0")
     sink = open_sink(args.out)
     deadline = time.monotonic() + (args.wait or 0)
     while True:
@@ -210,6 +223,7 @@ def _cmd_reproduce(args: argparse.Namespace) -> int:
     from .render import find_renderer
     from .reproduce import reproduce
 
+    _check_min("--threads", args.threads, 0)
     manifest = json.loads((Path(args.dataset) / "manifest.json").read_text(encoding="utf-8"))
     renderer = find_renderer(parse_config(manifest["config"]), args.blender, args.strata)
     report = reproduce(
